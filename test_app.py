@@ -1,11 +1,13 @@
+import tempfile
 import unittest
 from decimal import Decimal
+from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
 from vpn import proton_connection
 from sheets import HEADERS, Sheets, formulas, plan_rows, sold_for
-from app import DEFAULTS, choose, extract, parse_input, supplier_rules
+from app import DEFAULTS, Jobs, choose, extract, parse_input, supplier_rules
 from suppliers import Pending, contains_part, motion, offer, open_public, public_link, site, smc
 
 
@@ -145,6 +147,20 @@ class SupplierLinks(unittest.TestCase):
         dns.return_value = [(2, 1, 6, '', ('192.168.0.1', 443))]
         with self.assertRaisesRegex(Pending, 'rede interna'):
             open_public('https://loja.com/')
+
+
+class Homelab(unittest.TestCase):
+    @patch('app.subprocess.run')
+    def test_supplier_test_runs_on_the_server(self, run):
+        with tempfile.TemporaryDirectory() as folder:
+            jobs = Jobs(DEFAULTS, Path(folder), worker_host='meu-homelab')
+            run.return_value = CompletedProcess([], 0, '{"result": {"found": false}}\n')
+            self.assertEqual(jobs.test({'part': 'Y-G04'}), {'found': False})
+            self.assertIn('meu-homelab', run.call_args.args[0])
+            for reply, reason in [('{"error": "VPN desligada."}\n', 'VPN'), ('', 'conexão')]:
+                with self.subTest(reason=reason), self.assertRaisesRegex(Pending, reason):
+                    run.return_value = CompletedProcess([], 0, reply)
+                    jobs.test({'part': 'Y-G04'})
 
 
 class SheetsIntegration(unittest.TestCase):

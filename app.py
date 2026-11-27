@@ -310,14 +310,32 @@ class Jobs:
             self.executor.submit(self.run, data, suppliers, batch, limit)
         return data
 
+    def remote_command(self):
+        return ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+                '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3',
+                '-o', 'StrictHostKeyChecking=yes', '-o', 'ClearAllForwardings=yes',
+                '--', self.worker_host,
+                'cd "$HOME/.local/share/buscador-fornecedores-amazon" && exec /usr/bin/python3 -B app.py --run-job']
+
+    def test(self, options):
+        if not self.worker_host:
+            return test_supplier(self.config, options)
+        failed = 'A conexão com o servidor falhou durante o teste.'
+        try:
+            done = subprocess.run(self.remote_command(), input=json.dumps({'test': options}),
+                                  capture_output=True, encoding='utf-8', timeout=180)
+            reply = json.loads(done.stdout.splitlines()[-1])
+            if 'error' not in reply:
+                return reply['result']
+            failed = str(reply['error'])
+        except (OSError, ValueError, IndexError, KeyError, TypeError, subprocess.SubprocessError):
+            pass
+        raise Pending(failed)
+
     def run_remote(self, job, options):
         job.update(status='running', message='Enviando o lote ao servidor.')
         self.save(job)
-        command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
-                   '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3',
-                   '-o', 'StrictHostKeyChecking=yes', '-o', 'ClearAllForwardings=yes',
-                   '--', self.worker_host,
-                   'cd "$HOME/.local/share/buscador-fornecedores-amazon" && exec /usr/bin/python3 -B app.py --run-job']
+        command = self.remote_command()
         try:
             with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, encoding='utf-8') as process:
@@ -508,7 +526,7 @@ class Dashboard(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise Pending('Envie os dados do lote em um objeto JSON.')
             if self.path == '/api/test':
-                self.respond(200, test_supplier(self.server.jobs.config, payload))
+                self.respond(200, self.server.jobs.test(payload))
             else:
                 self.respond(202, self.server.jobs.submit(payload))
         except Pending as exc:
@@ -532,6 +550,12 @@ def run_job(config, state):
         options = json.load(sys.stdin)
         if not isinstance(options, dict):
             raise Pending('Dados do lote inválidos.')
+        if 'test' in options:
+            try:
+                send({'result': test_supplier(config, options['test'])})
+            except Pending as exc:
+                send({'error': str(exc)})
+            return
         state.mkdir(mode=0o700, exist_ok=True, parents=True)
         with (state / 'worker.lock').open('a') as lock:
             try:

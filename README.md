@@ -1,6 +1,6 @@
 # Buscador de Fornecedores Amazon
 
-> Painel que lê uma lista de anúncios da Amazon dos EUA, consulta preço e estoque em fornecedores, calcula o preço de venda e grava o resultado no Google Sheets. Eu o desenvolvi para substituir uma pesquisa de revenda que era feita à mão.
+> Painel que lê uma lista de anúncios da Amazon dos EUA, consulta preço e estoque em fornecedores, calcula o preço de venda e grava o resultado no Google Sheets. É um robô que desenvolvi para substituir uma pesquisa de revenda feita à mão, pensado para rodar no meu homelab.
 
 [![testes](https://github.com/mateus-bonette00/buscador-fornecedores-amazon/actions/workflows/ci.yml/badge.svg)](https://github.com/mateus-bonette00/buscador-fornecedores-amazon/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
@@ -10,7 +10,18 @@
 
 ![Painel do app em modo simulação](docs/painel.png)
 
-A imagem mostra o modo Simulação, que usa dados de exemplo. Os testes automatizados usam respostas simuladas, e esta versão pública ainda não foi validada ao vivo com a planilha, o Keepa ou os fornecedores. O repositório não tem dados nem nomes do negócio original.
+A imagem mostra o modo Simulação, que usa dados de exemplo. Os testes automatizados também usam respostas simuladas. O repositório não tem dados nem nomes do negócio original.
+
+## Roda no meu homelab
+
+Eu rodo minhas automações e robôs no meu homelab, para o notebook de trabalho ficar livre. Quis que este projeto funcionasse do mesmo jeito: no notebook fica o painel, e o servidor faz o trabalho.
+
+- O Chrome abre as abas dos fornecedores no servidor, sem tomar a minha tela.
+- A VPN, as chaves e a credencial do Google usadas nos lotes ficam no servidor.
+- O lote e o teste de fornecedor vão por SSH, com login por chave e conferência do `known_hosts`. O app não abre porta nova para a rede.
+- O progresso volta para o painel produto por produto.
+
+Há dois modos. No primeiro, o painel roda no notebook e envia o trabalho por SSH, e o notebook precisa ficar conectado até o lote terminar. No segundo, o painel inteiro vira um serviço no homelab, acessado por túnel SSH, e o lote continua mesmo com o notebook desligado. Os comandos estão em [Instalar no homelab](#instalar-no-homelab).
 
 ## O que ele faz
 
@@ -192,7 +203,7 @@ npm test                    # testes em Python e sintaxe do app.js
 python3 -m unittest -v      # só os testes em Python
 ```
 
-São 15 testes. Cinco cobrem os links de fornecedor: leitor genérico, agrupamento e bloqueio de endereços internos. Seis cobrem leitura do título, preço de venda, escolha do fornecedor, prazo da SMC, código exato na Motion e ASINs repetidos. Dois cobrem a gravação na planilha e dois, a checagem da VPN. O GitHub Actions roda os testes a cada push e pull request.
+São 16 testes. Um cobre o teste de fornecedor no homelab. Cinco cobrem os links de fornecedor: leitor genérico, agrupamento e bloqueio de endereços internos. Seis cobrem leitura do título, preço de venda, escolha do fornecedor, prazo da SMC, código exato na Motion e ASINs repetidos. Dois cobrem a gravação na planilha e dois, a checagem da VPN. O GitHub Actions roda os testes a cada push e pull request.
 
 Eles não abrem o painel nem a extensão. A leitura das lojas depende do layout das páginas, e um site pode recusar consultas automáticas. Nesses casos o produto fica pendente. Respeite os termos de uso de cada site.
 
@@ -202,29 +213,36 @@ Eles não abrem o painel nem a extensão. A leitura das lojas depende do layout 
 - [ ] Gravar um GIF de demonstração
 - [ ] Exportar o resultado em CSV pelo painel
 
-## Rodar em um servidor
+## Instalar no homelab
 
-Copie o projeto para `~/.local/share/buscador-fornecedores-amazon` no servidor. As credenciais e o `settings.json` também ficam lá.
-
-Para usar o painel no seu computador e rodar os lotes no servidor:
+Copie o projeto para o servidor, trocando `meu-homelab` pelo seu alias SSH com login por chave, já registrado no `known_hosts`:
 
 ```bash
-WORKER_HOST=meu-servidor npm start
+ssh meu-homelab 'mkdir -p ~/.local/share/buscador-fornecedores-amazon'
+rsync -a --exclude .git ./ meu-homelab:.local/share/buscador-fornecedores-amazon/
 ```
 
-Aqui, `meu-servidor` é um alias SSH com login por chave, já registrado no `known_hosts`. Nesse modo, o botão Testar continua rodando no seu computador. Para testar um fornecedor com a VPN do servidor, use o painel instalado lá, como abaixo.
+As credenciais e o `settings.json` também ficam no servidor. Para usar a extensão, o servidor precisa de uma sessão gráfica com o Chrome aberto.
 
-Para deixar o painel inteiro como serviço no servidor:
+### Modo 1: painel no notebook, trabalho no homelab
 
 ```bash
-# no servidor, dentro da pasta do projeto
+WORKER_HOST=meu-homelab npm start
+```
+
+### Modo 2: tudo no homelab
+
+```bash
+# no servidor
+cd ~/.local/share/buscador-fornecedores-amazon
 mkdir -p ~/.config/systemd/user
 cp ops/buscador-fornecedores-amazon.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now buscador-fornecedores-amazon
+loginctl enable-linger "$USER"   # mantém o serviço ativo sem sessão aberta
 
 # no seu computador
-ssh -L 8746:127.0.0.1:8746 meu-servidor
+ssh -L 8746:127.0.0.1:8746 meu-homelab
 ```
 
 Com o túnel aberto, acesse `http://127.0.0.1:8746`.

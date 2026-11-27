@@ -235,7 +235,6 @@ async function setup() {
       `pill ${ready ? 'ready' : 'pending'}`));
   byId('connections').replaceChildren(...connections);
   known = data.known;
-  if (data.remote_worker) byId('link-hint').append(' O botão Testar roda neste computador, sem a VPN nem o Chrome do servidor.');
   renderSuppliers();
   form.elements.mode.value = data.remote_worker ? 'input' : data.keepa ? 'keepa' : data.sheets ? 'input' : 'demo';
   byId('run').disabled = false;
