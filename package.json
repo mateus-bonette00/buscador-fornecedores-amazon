@@ -1,8 +1,24 @@
 {
   "name": "buscador-fornecedores-amazon",
+  "version": "2.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
+    "dev": "vite",
+    "dev:server": "node server/index.js",
+    "build": "vite build",
     "start": "sh ops/start.sh",
-    "test": "python3 -m unittest -v && node --check web/app.js"
+    "test": "node --test test/*.test.js && node --check chrome-extension/worker.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "htmlparser2": "^10.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.2.0"
   }
 }

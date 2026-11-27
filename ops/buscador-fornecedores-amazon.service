@@ -4,8 +4,7 @@ Description=Buscador de Fornecedores Amazon (painel local)
 [Service]
 Type=simple
 WorkingDirectory=%h/.local/share/buscador-fornecedores-amazon
-ExecStart=/usr/bin/python3 %h/.local/share/buscador-fornecedores-amazon/app.py
-Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/env node %h/.local/share/buscador-fornecedores-amazon/server/index.js
 UMask=0077
 NoNewPrivileges=yes
 Restart=on-failure

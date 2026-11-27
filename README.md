@@ -1,10 +1,10 @@
 # Buscador de Fornecedores Amazon
 
-> Robô com painel web que puxa anúncios da Amazon dos EUA pelo Keepa (CSV ou API), consulta preço e estoque em fornecedores, calcula o preço de venda e grava na planilha do Google Sheets o lucro, o ROI e a margem para Amazon FBM e FBA. Desenvolvi para substituir uma pesquisa de revenda feita à mão e rodar no meu homelab.
+> Aplicação web em React, Vite, Node.js e Express para sellers de Amazon FBA e Amazon FBM nos EUA. O robô puxa anúncios pelo Keepa (CSV ou API), consulta preço e estoque em fornecedores, calcula o preço de venda e grava no Google Sheets o lucro, o ROI e a margem para FBM e FBA. Desenvolvi para substituir a pesquisa manual de revenda e rodar no meu homelab Linux Ubuntu 24.
 
 [![testes](https://github.com/mateus-bonette00/buscador-fornecedores-amazon/actions/workflows/ci.yml/badge.svg)](https://github.com/mateus-bonette00/buscador-fornecedores-amazon/actions/workflows/ci.yml)
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![JavaScript](https://img.shields.io/badge/JavaScript-sem%20framework-F7DF1E.svg)](web/app.js)
+[![React + Vite](https://img.shields.io/badge/React-Vite-61DAFB.svg)](web/src/App.jsx)
+[![Node.js + Express](https://img.shields.io/badge/Node.js-Express-339933.svg)](server/app.js)
 [![Google Sheets API](https://img.shields.io/badge/Google%20Sheets-API%20v4-34A853.svg)](https://developers.google.com/workspace/sheets/api)
 [![Chrome Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3-4285F4.svg)](chrome-extension/manifest.json)
 
@@ -14,18 +14,18 @@ A demonstração acima usa dados de exemplo para mostrar o fluxo de ponta a pont
 
 ## Roda no meu homelab
 
-Eu rodo minhas automações e robôs no meu homelab, para o notebook de trabalho ficar livre. Quis que este projeto funcionasse do mesmo jeito: no notebook fica o painel, e o servidor faz o trabalho.
+Eu rodo minhas automações e robôs no meu homelab (servidor Linux Ubuntu 24), para o meu notebook de trabalho (também Ubuntu 24) ficar livre. Quis que este projeto funcionasse do mesmo jeito: no notebook fica o painel web em React, e o servidor faz o trabalho pesado.
 
 - O Chrome abre as abas dos fornecedores no servidor, sem tomar a minha tela.
 - A VPN, as chaves e a credencial do Google usadas nos lotes ficam no servidor.
 - O lote e o teste de fornecedor vão por SSH, com login por chave e conferência do `known_hosts`. O app não abre porta nova para a rede.
 - O progresso volta para o painel produto por produto.
 
-Há dois modos. No primeiro, o painel roda no notebook e envia o trabalho por SSH, e o notebook precisa ficar conectado até o lote terminar. No segundo, o painel inteiro vira um serviço no homelab, acessado por túnel SSH, e o lote continua mesmo com o notebook desligado. Os comandos estão em [Instalar no homelab](#instalar-no-homelab).
+Há dois modos. No primeiro, o painel roda no notebook e envia o trabalho por SSH, e o notebook precisa ficar conectado até o lote terminar. No segundo, o painel inteiro vira um serviço `systemd` no homelab, acessado por túnel SSH, e o lote continua mesmo com o notebook desligado. Os comandos estão em [Instalar no homelab](#instalar-no-homelab).
 
 ## O que ele faz
 
-Quem revende produtos na Amazon dos EUA normalmente repete o mesmo trabalho à mão: exporta ou consulta produtos no Keepa, abre cada anúncio para achar o código da peça, procura esse código em fornecedores, confere se há estoque, faz as contas de lucro FBM e FBA e lança tudo na planilha.
+Sellers de Amazon FBA e Amazon FBM nos EUA costumam repetir o mesmo processo à mão: exportam ou consultam anúncios no Keepa, abrem cada produto para achar o código da peça, procuram esse código em fornecedores, conferem se há estoque, fazem as contas de lucro FBM e FBA e lançam tudo na planilha.
 
 Este robô automatiza esse caminho e só grava um produto quando consegue confirmar a oferta. Se o título tem mais de um código possível, se um dos fornecedores não confirma o código exato ou se falta estoque, o produto fica pendente no painel com o motivo escrito.
 
@@ -34,7 +34,7 @@ Quando dá para confirmar, ele:
 - recebe os produtos pelo Keepa (CSV exportado ou consulta direta na API do Keepa) ou por uma lista de ASINs e links da Amazon
 - busca pelo Keepa os títulos que faltam e separa o código da peça e o tamanho do pack em títulos como `Pack of 10 KQ2F11-35A`
 - compara os fornecedores e escolhe um pelas regras de estoque
-- calcula o preço de venda e grava a linha do ASIN no Google Sheets com as fórmulas de lucro, ROI e margem para FBM (envio pelo vendedor) e FBA (envio pela Amazon)
+- calcula o preço de venda em centavos inteiros e grava a linha do ASIN no Google Sheets com as fórmulas de lucro, ROI e margem para Amazon FBM (envio pelo vendedor) e Amazon FBA (envio pela Amazon)
 - relê a planilha depois de gravar para conferir se o preço e as margens FBM e FBA bateram
 
 Os lotes rodam em segundo plano, com três produtos consultados por vez, e o histórico fica em SQLite.
@@ -43,7 +43,7 @@ Os lotes rodam em segundo plano, com três produtos consultados por vez, e o his
 
 ![Painel do app em modo simulação](docs/painel.png)
 
-O painel organiza a pesquisa em duas áreas: o formulário de novo lote ao lado do histórico de execuções em SQLite, e abaixo a tabela de resultados.
+O frontend foi construído em React com Vite (`web/`) e servido pelo Express em produção (`dist/`). A tela divide o formulário de novo lote ao lado do histórico em SQLite, com a tabela de resultados abaixo.
 
 - No topo, uma barra mostra o estado das integrações (`Keepa API`, `Google Sheets`, `VPN SMC EUA` ou `Servidor homelab`). Se o navegador perder contato com o backend local, aparece um aviso com botão para tentar novamente.
 - A interface abre em tema claro por padrão, acompanha a preferência do sistema operacional e permite alternar entre tema claro e escuro pelo botão no topo.
@@ -52,37 +52,37 @@ O painel organiza a pesquisa em duas áreas: o formulário de novo lote ao lado 
 
 ## Como foi feito
 
-O backend usa só a biblioteca padrão do Python, então não há pacote para instalar com `pip`. O painel é HTML, CSS e JavaScript sem framework.
+O frontend usa React 18 com Vite, organizado em componentes pequenos e sem bibliotecas de UI pesadas. O backend roda em Node.js 20 com Express, SQLite (`better-sqlite3`) para o histórico dos lotes e `htmlparser2` para leitura de HTML e JSON-LD.
 
-A integração com o Google Sheets não usa SDK. O app assina o JWT da conta de serviço com o `openssl` e chama a API REST.
+A integração com o Google Sheets não usa SDK. O app assina o JWT RS256 da conta de serviço direto com `node:crypto` e chama a API REST v4.
 
-Para ler páginas de fornecedores no navegador, fiz uma extensão do Chrome que conversa com o Python por Native Messaging e um socket Unix. Ela envia apenas os campos que o app precisa ler.
+Para ler páginas de fornecedores no navegador, há uma extensão do Chrome (Manifest V3) que conversa com o Node.js (`server/chrome-native.js`) por Native Messaging e um socket Unix. Ela envia apenas os campos que o app precisa ler.
 
-O painel atende em `127.0.0.1`, confere os cabeçalhos `Host` e `Origin`, define uma Content Security Policy e recusa redirecionamento para outro domínio. Também dá para deixar o painel no seu computador e executar os lotes em um servidor por SSH.
+O servidor Express escuta apenas em `127.0.0.1`, valida os cabeçalhos `Host` e `Origin`, aplica Content Security Policy, recusa redirecionamentos para outro domínio e bloqueia IPs privados nos links de fornecedor.
 
 ## Decisões de engenharia
 
 **Recusar em caso de dúvida.** Preferi deixar um produto pendente a gravar uma oferta errada na planilha. Por isso cada pendência mostra o motivo.
 
-**Sem dependências no backend.** Escrevi tudo com a biblioteca padrão do Python. Assim o projeto roda sem ambiente virtual e a superfície de manutenção fica menor.
+**React + Vite com backend em Node.js e Express.** Toda a base fica em JavaScript, do painel até a API, a fila de lotes e a ponte da extensão do Chrome. Em desenvolvimento o Vite faz proxy de `/api` para o Express; em produção o Express serve o bundle estático de `dist/`.
 
-**JWT assinado com OpenSSL.** Em vez de instalar o SDK do Google, eu monto o JWT da conta de serviço e chamo a API REST diretamente. São poucas linhas, e o fluxo fica visível no código.
+**JWT assinado com `node:crypto`.** Em vez de instalar o SDK do Google, eu monto o JWT da conta de serviço com a criptografia nativa do Node.js e chamo a API REST diretamente. São poucas linhas, e o fluxo fica visível no código.
 
-**Extensão para páginas que exigem navegador.** Algumas páginas de fornecedor só respondem bem com uma sessão aberta no Chrome. Então ligo a extensão ao Python por Native Messaging e socket Unix.
+**Extensão para páginas que exigem navegador.** Algumas páginas de fornecedor só respondem bem com uma sessão aberta no Chrome. A extensão conversa com `server/chrome-native.js` por Native Messaging e socket Unix.
 
-**Limitações que eu conheço.** O cálculo assume que o pacote da loja tem o mesmo tamanho do anúncio. O leitor genérico depende do que cada site publica: sem a quantidade em estoque ou com uma faixa de preço, o produto fica pendente. Os testes usam respostas simuladas. Se eu retomasse o projeto, trocaria a leitura de páginas por catálogos oficiais.
+**Limitações que eu conheço.** O cálculo assume que o pacote da loja tem o mesmo tamanho do anúncio. O leitor genérico depende do que cada site publica: sem a quantidade em estoque ou com uma faixa de preço, o produto fica pendente. Os testes usam respostas simuladas. Se eu retomasse o projeto para operação contínua, trocaria a leitura de páginas por catálogos oficiais.
 
 ## Arquitetura
 
-![Diagrama com o painel web, o orquestrador em Python, os conectores de fornecedores, a extensão do Chrome, o SQLite e o Google Sheets](docs/arquitetura.png)
+![Diagrama com o painel React + Vite, o servidor Node.js + Express, os conectores de fornecedores, a extensão do Chrome, o SQLite e o Google Sheets](docs/arquitetura.png)
 
 O arquivo editável do diagrama é o [`docs/arquitetura.html`](docs/arquitetura.html).
 
 ### Fluxo de uma pesquisa
 
 1. Você informa a marca, escolhe os fornecedores e a origem: CSV, ASINs, links da Amazon ou uma consulta no Keepa.
-2. O painel envia o lote para a API local, que coloca o pedido na fila.
-3. Com uma chave do Keepa, o app busca os títulos que faltam. Se ainda faltar um título, tenta ler a página do anúncio na Amazon.
+2. O painel React envia o lote para a API Express local, que coloca o pedido na fila.
+3. Com uma chave do Keepa, o backend busca os títulos que faltam. Se ainda faltar um título, tenta ler a página do anúncio na Amazon.
 4. De cada título saem o código da peça e o tamanho do pack.
 5. Os conectores consultam os fornecedores por HTTPS ou por uma aba do Chrome.
 6. O app escolhe o fornecedor e calcula o preço de venda.
@@ -109,26 +109,35 @@ Os fornecedores usados aqui vendem por pacote, por isso o preço exibido já é 
 
 ### Pré-requisitos
 
-- Linux e Python 3 (testado no 3.12)
-- Node.js, opcional, para `npm start` e `npm test`
-- `openssl` e uma conta de serviço do Google Cloud, para gravar na planilha
+- Linux (testado no Ubuntu 24) e Node.js 20 ou mais recente
+- Uma conta de serviço do Google Cloud, para gravar na planilha
 - Google Chrome 120 ou mais recente, para a extensão
 - Chave da API do Keepa, para buscar produtos por lá
 
-### 1. Clonar
+### 1. Clonar e instalar
 
 ```bash
 git clone https://github.com/mateus-bonette00/buscador-fornecedores-amazon.git
 cd buscador-fornecedores-amazon
+npm install
 ```
 
 ### 2. Testar com a simulação
 
+Modo produção local (gera o build do Vite automaticamente na primeira vez e sobe o Express):
+
 ```bash
-python3 app.py      # ou: npm start
+npm start
 ```
 
 Abra `http://127.0.0.1:8746`, deixe a origem em Simulação e clique em "Iniciar simulação". Devem aparecer 2 produtos simulados e 1 pendente. Não precisa de conta nem de chave.
+
+Para desenvolver o frontend com recarregamento instantâneo do Vite:
+
+```bash
+npm run dev:server   # terminal 1: API Express em 127.0.0.1:8746
+npm run dev          # terminal 2: Vite em 127.0.0.1:5173 com proxy para /api
+```
 
 ### 3. Conectar a planilha
 
@@ -164,7 +173,7 @@ O leitor genérico faz a leitura sem navegador. Sites que bloqueiam robôs ou mo
 A Motion costuma recusar a leitura direta, então use a extensão do Chrome. Registre o host local:
 
 ```bash
-python3 ops/setup_chrome.py
+node ops/setup-chrome.js
 ```
 
 Depois, em `chrome://extensions`, ative o modo do desenvolvedor, clique em "Carregar sem compactação" e selecione a pasta `chrome-extension/`. Adicione `"supplier_chrome": true` ao `settings.json` e deixe o Chrome aberto durante o lote.
@@ -175,23 +184,31 @@ A consulta à SMC precisa sair por um IP dos Estados Unidos. Você pode informar
 
 ```
 buscador-fornecedores-amazon/
-├── app.py                       # Painel local, fila de lotes, SQLite e escolha do fornecedor
-├── suppliers.py                 # Leitores da Motion, da SMC e leitor genérico
-├── sheets.py                    # Preço de venda e gravação no Google Sheets (colunas A a T)
-├── vpn.py                       # Confere a VPN antes de consultar a SMC
-├── chrome_native.py             # Ponte entre o Python e a extensão
-├── test_app.py                  # Testes automatizados
+├── server/
+│   ├── index.js                 # CLI do servidor Express e worker SSH (--run-job)
+│   ├── app.js                   # Rotas REST em Express, segurança e entrega do build React
+│   ├── jobs.js                  # Fila de lotes, SQLite, Keepa, escolha de fornecedor e SSH
+│   ├── suppliers.js             # Leitores da Motion, da SMC e leitor genérico com proteção SSRF
+│   ├── sheets.js                # Cálculo FBM/FBA, JWT via node:crypto e Google Sheets API v4
+│   ├── vpn.js                   # Confere a VPN EUA pelo nmcli antes de consultar a SMC
+│   └── chrome-native.js         # Ponte Native Messaging + socket Unix com o Chrome
+├── web/
+│   ├── index.html               # Entrada do Vite
+│   ├── public/favicon.svg       # Ícone da aplicação
+│   └── src/                     # Painel em React (App, componentes e estilos)
 ├── chrome-extension/
 │   ├── manifest.json            # Manifest V3
 │   └── worker.js                # Abre a aba, lê os campos e fecha
-├── web/                         # Painel em HTML, CSS, JavaScript e favicon SVG
+├── test/
+│   └── app.test.js              # Suíte de testes com node:test
 ├── ops/
-│   ├── start.sh                 # Inicia o app, local ou com servidor remoto
-│   ├── setup_chrome.py          # Registra o host da extensão
+│   ├── start.sh                 # Build automático (se necessário) e execução local ou remota
+│   ├── setup-chrome.js          # Registra server/chrome-native.js no perfil do Chrome
 │   └── buscador-fornecedores-amazon.service
 ├── docs/                        # Planilha, diagrama, capturas e GIF de demonstração
 ├── examples/                    # CSV, planilha modelo e configuração de exemplo
-├── .github/workflows/ci.yml     # Testes no GitHub Actions
+├── .github/workflows/ci.yml     # Build e testes no GitHub Actions
+├── vite.config.js               # Configuração do Vite e proxy de desenvolvimento
 └── package.json
 ```
 
@@ -201,27 +218,27 @@ buscador-fornecedores-amazon/
 |---|---|
 | Planilha de destino | `spreadsheet_id` e `sheet_id` no `settings.json` |
 | Frete e prazo | Campos de cada fornecedor no painel |
-| Estoque mínimo | `supplier_rules` no `app.py`, ou `suppliers` no `settings.json` para Motion e SMC |
+| Estoque mínimo | `supplierRules` no `server/jobs.js`, ou `suppliers` no `settings.json` para Motion e SMC |
 | Preparo de um produto já gravado | Coluna "Preparo (US$)" da planilha |
 | Taxa FBA de um produto já gravado | Coluna "Taxa FBA (US$)" da planilha |
-| Preparo e taxa FBA padrão | `DEFAULT_PREP` e `DEFAULT_FBA_FEE` no `sheets.py` (e `app.py` para o preparo) |
-| Margem e taxa da Amazon | `sheets.py`: `sold_for`, `formulas` e a conferência das margens FBM e FBA |
-| Regra entre Motion e SMC | Função `choose` no `app.py` |
-| Colunas da planilha | `sheets.py` e `docs/PLANILHA.md` |
-| Leitor próprio para outro site | `DRIVERS` no `suppliers.py` e `KNOWN_DOMAINS` no `app.py` |
-| Visual do painel e temas | `web/style.css` |
-| Porta | `python3 app.py --port 9000` |
+| Preparo e taxa FBA padrão | `DEFAULT_PREP` e `DEFAULT_FBA_FEE` em `server/sheets.js` e `web/src/api.js` |
+| Margem e taxa da Amazon | `server/sheets.js`: `soldFor`, `formulas` e conferência das margens FBM e FBA |
+| Regra entre Motion e SMC | Função `choose` no `server/jobs.js` |
+| Colunas da planilha | `server/sheets.js` e `docs/PLANILHA.md` |
+| Leitor próprio para outro site | `DRIVERS` no `server/suppliers.js` e `KNOWN_DOMAINS` no `server/jobs.js` |
+| Visual do painel e temas | `web/src/styles.css` |
+| Porta | `node server/index.js --port 9000` |
 
 ## Testes
 
 ```bash
-npm test                    # testes em Python e sintaxe do app.js
-python3 -m unittest -v      # só os testes em Python
+npm run build   # gera o bundle de produção do React com Vite
+npm test        # 20 testes em Node.js + checagem de sintaxe da extensão Chrome
 ```
 
-São 19 testes em Python, além da checagem de sintaxe de `web/app.js` e `chrome-extension/worker.js` no CI. Um cobre o teste de fornecedor no homelab. Dois cobrem o painel (`total` inicial na preparação de lotes conhecidos e entrega do favicon sem 404). Cinco cobrem os links de fornecedor: leitor genérico, agrupamento e bloqueio de endereços internos. Seis cobrem leitura do título, preço de venda, escolha do fornecedor, prazo da SMC, código exato na Motion e ASINs repetidos. Três cobrem a gravação na planilha com as fórmulas e margens FBM e FBA, e dois cobrem a checagem da VPN. O GitHub Actions roda os testes a cada push e pull request.
+São 20 testes automatizados usando `node:test`, além da checagem de sintaxe de `chrome-extension/worker.js` e do build do Vite no CI. Um cobre o teste de fornecedor no homelab via SSH. Três cobrem o servidor Express (`total` inicial na preparação de lotes, rotas de favicon, fluxo completo de simulação pela API e bloqueio de `Origin` externo). Cinco cobrem os links de fornecedor: leitor genérico, agrupamento e bloqueio de endereços internos. Seis cobrem leitura do título, preço de venda, escolha do fornecedor, prazo da SMC, código exato na Motion e ASINs repetidos. Três cobrem a gravação na planilha com as fórmulas e margens FBM e FBA, e dois cobrem a checagem da VPN. O GitHub Actions roda build e testes a cada push e pull request.
 
-Eles não abrem o painel nem a extensão. A leitura das lojas depende do layout das páginas, e um site pode recusar consultas automáticas. Nesses casos o produto fica pendente. Respeite os termos de uso de cada site.
+Eles não abrem a extensão no Chrome. A leitura das lojas depende do layout das páginas, e um site pode recusar consultas automáticas. Nesses casos o produto fica pendente. Respeite os termos de uso de cada site.
 
 ## Roadmap
 
@@ -231,11 +248,12 @@ Eles não abrem o painel nem a extensão. A leitura das lojas depende do layout 
 
 ## Instalar no homelab
 
-Copie o projeto para o servidor, trocando `meu-homelab` pelo seu alias SSH com login por chave, já registrado no `known_hosts`:
+Copie o projeto para o servidor Linux Ubuntu 24, trocando `meu-homelab` pelo seu alias SSH com login por chave, já registrado no `known_hosts`:
 
 ```bash
 ssh meu-homelab 'mkdir -p ~/.local/share/buscador-fornecedores-amazon'
-rsync -a --exclude .git ./ meu-homelab:.local/share/buscador-fornecedores-amazon/
+rsync -a --exclude .git --exclude node_modules --exclude dist ./ meu-homelab:.local/share/buscador-fornecedores-amazon/
+ssh meu-homelab 'cd ~/.local/share/buscador-fornecedores-amazon && npm ci && npm run build'
 ```
 
 As credenciais e o `settings.json` também ficam no servidor. Para usar a extensão, o servidor precisa de uma sessão gráfica com o Chrome aberto.
@@ -271,4 +289,4 @@ Projeto independente, sem vínculo com Amazon, Keepa, Motion, SMC, Google ou Pro
 
 ## Stack
 
-[Python](https://www.python.org) · [SQLite](https://www.sqlite.org) · [Google Sheets API](https://developers.google.com/workspace/sheets/api) · [Keepa API](https://keepa.com/#!api) · [Chrome Extensions](https://developer.chrome.com/docs/extensions) · [OpenSSL](https://www.openssl.org) · [GitHub Actions](https://docs.github.com/actions)
+[React](https://react.dev) · [Vite](https://vite.dev) · [Node.js](https://nodejs.org) · [Express](https://expressjs.com) · [SQLite](https://www.sqlite.org) · [Google Sheets API](https://developers.google.com/workspace/sheets/api) · [Keepa API](https://keepa.com/#!api) · [Chrome Extensions](https://developer.chrome.com/docs/extensions) · [GitHub Actions](https://docs.github.com/actions)
