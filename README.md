@@ -14,7 +14,7 @@ A imagem mostra o modo Simulação, que usa dados de exemplo. Os testes automati
 
 ## O que ele faz
 
-O app só grava um produto quando consegue confirmar a oferta. Se o título tem mais de um código possível, se uma das lojas selecionadas não confirma o código exato ou se falta estoque, o produto fica pendente no painel com o motivo escrito.
+O app só grava um produto quando consegue confirmar a oferta. Se o título tem mais de um código possível, se um dos fornecedores não confirma o código exato ou se falta estoque, o produto fica pendente no painel com o motivo escrito.
 
 Quando dá para confirmar, ele:
 
@@ -45,7 +45,7 @@ O painel atende em `127.0.0.1`, confere os cabeçalhos `Host` e `Origin`, define
 
 **Extensão para páginas que exigem navegador.** Algumas páginas de fornecedor só respondem bem com uma sessão aberta no Chrome. Então ligo a extensão ao Python por Native Messaging e socket Unix.
 
-**Limitações que eu conheço.** O cálculo assume que o pacote da loja tem o mesmo tamanho do anúncio, e os testes usam respostas simuladas. Se eu retomasse o projeto, trocaria a leitura de páginas por catálogos oficiais e testaria o painel no navegador.
+**Limitações que eu conheço.** O cálculo assume que o pacote da loja tem o mesmo tamanho do anúncio. O leitor genérico depende do que cada site publica: sem a quantidade em estoque ou com uma faixa de preço, o produto fica pendente. Os testes usam respostas simuladas. Se eu retomasse o projeto, trocaria a leitura de páginas por catálogos oficiais.
 
 ## Arquitetura
 
@@ -119,9 +119,23 @@ Sem a API do Keepa, importe um CSV com a coluna `ASIN` ou cole um ASIN ou link d
 
 Para usar a API, salve a chave em `~/.config/buscador-fornecedores-amazon/keepa.key` e escolha "Consulta no Keepa" no painel. Você pode buscar pela marca ou colar o JSON de *Show API query* do Product Finder.
 
-### 5. Preparar os fornecedores
+### 5. Adicionar os fornecedores
 
-Para usar a extensão, registre o host local:
+No painel, cole os links dos sites onde o robô deve procurar. Pode ser a página inicial, uma busca, uma categoria ou a página de um produto, com até 10 links por site e 8 sites por lote. Os links do mesmo site viram um fornecedor, com frete e prazo próprios. A lista fica salva no navegador.
+
+![Fornecedores adicionados por link no painel](docs/fornecedores.png)
+
+Antes do lote, use "Testar" com um part number que o site venda. O painel mostra o preço e a quantidade que leu, ou o motivo de não ter conseguido. Se você colar o link de uma busca feita com esse mesmo código, o teste troca o código por `{part}` e o robô passa a repetir a busca para cada produto.
+
+Motion e SMC têm leitores próprios. Os outros sites passam pelo leitor genérico, que só confirma uma oferta quando a página traz:
+
+- o código exato da peça, nos dados `schema.org` ou num rótulo como `Part Number`
+- um único preço em dólar
+- a quantidade em estoque (só "In stock" não basta)
+
+O leitor genérico faz a leitura sem navegador. Sites que bloqueiam robôs ou montam a página com JavaScript ficam pendentes, e muitas lojas não publicam a quantidade.
+
+A Motion costuma recusar a leitura direta, então use a extensão do Chrome. Registre o host local:
 
 ```bash
 python3 ops/setup_chrome.py
@@ -136,7 +150,7 @@ A consulta à SMC precisa sair por um IP dos Estados Unidos. Você pode informar
 ```
 buscador-fornecedores-amazon/
 ├── app.py                       # Painel local, fila de lotes, SQLite e escolha do fornecedor
-├── suppliers.py                 # Conectores da Motion, da SMC e de catálogo JSON
+├── suppliers.py                 # Leitores da Motion, da SMC e leitor genérico
 ├── sheets.py                    # Preço de venda e gravação no Google Sheets
 ├── vpn.py                       # Confere a VPN antes de consultar a SMC
 ├── chrome_native.py             # Ponte entre o Python e a extensão
@@ -160,35 +174,16 @@ buscador-fornecedores-amazon/
 | Para mudar | Edite |
 |---|---|
 | Planilha de destino | `spreadsheet_id` e `sheet_id` no `settings.json` |
-| Frete, prazo e estoque mínimo | `suppliers` no `settings.json`, com o objeto completo do fornecedor |
+| Frete e prazo | Campos de cada fornecedor no painel |
+| Estoque mínimo | `supplier_rules` no `app.py`, ou `suppliers` no `settings.json` para Motion e SMC |
 | Preparo de um produto já gravado | Coluna "Preparo (US$)" da planilha |
 | Preparo padrão | `app.py` e `sheets.py` |
 | Margem e taxa da Amazon | `sheets.py`: `sold_for`, `formulas` e a conferência da margem |
 | Regra entre Motion e SMC | Função `choose` no `app.py` |
 | Colunas da planilha | `sheets.py` e `docs/PLANILHA.md` |
-| Conector para outro site | Dicionário `DRIVERS` no `suppliers.py` |
+| Leitor próprio para outro site | `DRIVERS` no `suppliers.py` e `KNOWN_DOMAINS` no `app.py` |
 | Visual do painel | `web/style.css` |
 | Porta | `python3 app.py --port 9000` |
-
-Se o fornecedor oferece um catálogo em JSON, basta configurar:
-
-```json
-{
-  "suppliers": {
-    "exemplo": {
-      "name": "Fornecedor exemplo",
-      "driver": "json",
-      "endpoint": "https://api.example.com/products/{part}",
-      "product_host": "www.example.com",
-      "handling": 5,
-      "shipping": 40,
-      "minimum": 11
-    }
-  }
-}
-```
-
-A resposta precisa ter `partNumber`, `currency` (`USD`), `price`, `quantity`, `unitsPerSale` e `url`.
 
 ## Testes
 
@@ -197,14 +192,13 @@ npm test                    # testes em Python e sintaxe do app.js
 python3 -m unittest -v      # só os testes em Python
 ```
 
-São 10 testes. Seis cobrem leitura do título, preço de venda, escolha do fornecedor, prazo da SMC, código exato na Motion e ASINs repetidos. Dois cobrem a gravação na planilha e dois, a checagem da VPN. O GitHub Actions roda os testes a cada push e pull request.
+São 15 testes. Cinco cobrem os links de fornecedor: leitor genérico, agrupamento e bloqueio de endereços internos. Seis cobrem leitura do título, preço de venda, escolha do fornecedor, prazo da SMC, código exato na Motion e ASINs repetidos. Dois cobrem a gravação na planilha e dois, a checagem da VPN. O GitHub Actions roda os testes a cada push e pull request.
 
 Eles não abrem o painel nem a extensão. A leitura das lojas depende do layout das páginas, e um site pode recusar consultas automáticas. Nesses casos o produto fica pendente. Respeite os termos de uso de cada site.
 
 ## Roadmap
 
-- [ ] Validar ao vivo com uma planilha de teste
-- [ ] Testar a extensão e o painel no navegador
+- [ ] Testes automatizados do painel e da extensão no navegador
 - [ ] Gravar um GIF de demonstração
 - [ ] Exportar o resultado em CSV pelo painel
 
@@ -218,7 +212,7 @@ Para usar o painel no seu computador e rodar os lotes no servidor:
 WORKER_HOST=meu-servidor npm start
 ```
 
-Aqui, `meu-servidor` é um alias SSH com login por chave, já registrado no `known_hosts`.
+Aqui, `meu-servidor` é um alias SSH com login por chave, já registrado no `known_hosts`. Nesse modo, o botão Testar continua rodando no seu computador. Para testar um fornecedor com a VPN do servidor, use o painel instalado lá, como abaixo.
 
 Para deixar o painel inteiro como serviço no servidor:
 

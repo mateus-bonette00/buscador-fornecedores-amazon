@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 from vpn import proton_connection
 from sheets import HEADERS, Sheets, formulas, plan_rows, sold_for
-from app import DEFAULTS, choose, extract, parse_input
-from suppliers import Pending, contains_part, motion, offer, smc
+from app import DEFAULTS, choose, extract, parse_input, supplier_rules
+from suppliers import Pending, contains_part, motion, offer, open_public, public_link, site, smc
 
 
 class ProtonLifecycle(unittest.TestCase):
@@ -80,6 +80,71 @@ class BusinessRules(unittest.TestCase):
     def test_deduplicates_input(self):
         ids = parse_input('ASIN;Title\nB000000001;SMC Y-G04\nB000000001;SMC Y-G04 Pack Of 6')
         self.assertEqual(ids, [{'asin': 'B000000001', 'title': 'SMC Y-G04 Pack Of 6'}])
+
+
+def product_page(mpn='KQ2H06-01AS', stock=40, price='3.10'):
+    level = f',"inventoryLevel":{{"value":{stock}}}' if stock is not None else ''
+    return ('<script type="application/ld+json">{"@type":"Product","mpn":"' + mpn + '","offers":'
+            '{"price":"' + price + '","priceCurrency":"USD","availability":"https://schema.org/InStock"'
+            + level + '}}</script>')
+
+
+@patch('suppliers.socket.getaddrinfo', return_value=[(2, 1, 6, '', ('93.184.216.34', 443))])
+class SupplierLinks(unittest.TestCase):
+    def rules(self, *links):
+        return supplier_rules(DEFAULTS, [{'links': list(links), 'shipping': 25, 'handling': 3}])['loja.com']
+
+    def read(self, pages, *links):
+        with patch('suppliers.request', side_effect=lambda url, **_: pages[url]):
+            return site(self.rules(*links), 'KQ2H06-01AS', 1)
+
+    def test_reads_product_search_and_discovered_search(self, _dns):
+        item = 'https://loja.com/p/1'
+        found = self.read({item: product_page()}, item)
+        self.assertEqual((found.price, found.user_stock, found.shipping, found.handling),
+                         (Decimal('3.10'), 40, Decimal(25), 3))
+        pages = {'https://loja.com/s?q=KQ2H06-01AS': '<a href="/p/1">Fitting KQ2H06-01AS</a>'
+                 '<a href="/p/2">KQ2H06-01AS-X</a><a href="https://outra.com/p/3">KQ2H06-01AS</a>',
+                 item: product_page()}
+        self.assertEqual(self.read(pages, 'https://loja.com/s?q={part}').link, item)
+        pages['https://loja.com/'] = ('<script type="application/ld+json">{"@type":"WebSite","potentialAction":'
+                                      '{"@type":"SearchAction","target":"https://loja.com/s?q={search_term_string}"}}</script>')
+        self.assertEqual(self.read(pages, 'https://loja.com/').link, item)
+
+    def test_tries_next_link_and_reads_labeled_text(self, _dns):
+        pages = {'https://loja.com/a': product_page('OUTRO-1'),
+                 'https://loja.com/b': '<p>Part Number: KQ2H06-01AS</p><p>Your Price: $4.00</p><span>18 in stock</span>'}
+        found = self.read(pages, *pages)
+        self.assertEqual((found.price, found.user_stock), (Decimal('4.00'), 18))
+        self.assertIsNone(self.read(pages, 'https://loja.com/a'))
+
+    def test_refuses_what_it_cannot_confirm(self, _dns):
+        link = 'https://loja.com/p/1'
+        for page, reason in [(product_page(stock=None), 'quantidade'),
+                             (product_page().replace('USD', 'BRL'), 'dólar')]:
+            with self.subTest(reason=reason), self.assertRaisesRegex(Pending, reason):
+                self.read({link: page}, link)
+
+    def test_stock_is_not_guessed_from_prices_or_model_names(self, _dns):
+        link = 'https://loja.com/p/1'
+        for noise in ('<p>$552.46 In stock</p>', '<p>Arduino Mega 2560 In stock</p>'):
+            with self.subTest(noise=noise), self.assertRaisesRegex(Pending, 'quantidade'):
+                self.read({link: product_page(stock=None) + noise}, link)
+        self.assertEqual(self.read({link: product_page(stock=None) + '<span> 18 in stock </span>'}, link).user_stock, 18)
+
+    def test_groups_links_and_blocks_internal_addresses(self, dns):
+        rules = supplier_rules(DEFAULTS, [{'links': ['https://www.motion.com/a', 'https://motion.com/b'],
+                                           'shipping': 12.5, 'handling': 2}])
+        self.assertEqual((rules['motion']['driver'], rules['motion']['shipping']), ('motion', 12.5))
+        for link in ('http://loja.com', 'https://127.0.0.1/', 'https://localhost/', 'https://u:p@loja.com/',
+                     'https://loja.com:8080/'):
+            with self.subTest(link=link), self.assertRaises(Pending):
+                public_link(link)
+        with self.assertRaisesRegex(Pending, 'mesmo site'):
+            supplier_rules(DEFAULTS, [{'links': ['https://loja.com', 'https://outra.com']}])
+        dns.return_value = [(2, 1, 6, '', ('192.168.0.1', 443))]
+        with self.assertRaisesRegex(Pending, 'rede interna'):
+            open_public('https://loja.com/')
 
 
 class SheetsIntegration(unittest.TestCase):

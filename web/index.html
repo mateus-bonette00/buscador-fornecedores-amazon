@@ -42,9 +42,17 @@
             <label><span id="source-label">Dados de entrada</span><textarea name="input" rows="4" aria-describedby="source-hint"></textarea></label>
             <small id="source-hint"></small>
           </div>
-          <fieldset>
+          <fieldset id="supplier-fields">
             <legend>Fornecedores</legend>
-            <div id="suppliers" class="supplier-list"></div>
+            <label for="new-link">Links dos sites onde o robô deve procurar</label>
+            <div class="add-row">
+              <textarea id="new-link" rows="2" aria-describedby="link-hint link-error" placeholder="https://www.fornecedor.com/..."></textarea>
+              <button type="button" id="add-link" class="secondary">Adicionar</button>
+            </div>
+            <small id="link-hint">Cole um ou vários links: produto, busca, categoria ou página inicial. Links do mesmo site ficam juntos.</small>
+            <p id="link-error" class="note error" role="alert" hidden></p>
+            <p id="supplier-empty" class="empty">Nenhum fornecedor ainda. Adicione um link e use Testar para ver o que o robô consegue ler.</p>
+            <ul id="suppliers" class="supplier-list"></ul>
           </fieldset>
           <p id="form-note" class="note">A simulação usa dados de exemplo.</p>
           <button id="run" class="primary" type="submit" disabled>Iniciar simulação</button>

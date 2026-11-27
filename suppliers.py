@@ -1,6 +1,7 @@
 """Exact product matching and supplier availability."""
 
 import html
+import ipaddress
 import json
 import re
 import socket
@@ -95,6 +96,8 @@ class Page(HTMLParser):
         self.links = []
         self.anchor = None
         self.ignored = 0
+        self.data = []
+        self.json_ld = None
         self.feed(source)
         self.text = ' '.join(' '.join(self.lines).split())
         if re.search(r'just a moment|access denied|verify you are human|robot check',
@@ -104,10 +107,18 @@ class Page(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag in ('script', 'style'):
             self.ignored += 1
+        if tag == 'script' and dict(attrs).get('type') == 'application/ld+json':
+            self.json_ld = []
         if tag == 'a':
             self.anchor = (dict(attrs).get('href', ''), [])
 
     def handle_endtag(self, tag):
+        if tag == 'script' and self.json_ld is not None:
+            try:
+                self.data.append(json.loads(''.join(self.json_ld)))
+            except ValueError:
+                pass
+            self.json_ld = None
         if tag in ('script', 'style') and self.ignored:
             self.ignored -= 1
         if tag == 'a' and self.anchor:
@@ -116,6 +127,8 @@ class Page(HTMLParser):
             self.anchor = None
 
     def handle_data(self, data):
+        if self.json_ld is not None:
+            self.json_ld.append(data)
         if not self.ignored:
             self.lines.append(data)
             if self.anchor:
@@ -230,30 +243,169 @@ def motion(config, part, pack, proxy=None):
     return offer(config, amount, stock[0], link, at_least=stock[1])
 
 
-def supplier_api(config, part, pack, proxy=None):
-    """Contract for a configured catalog feed with explicit sell-unit size."""
-    link = config['endpoint'].replace('{part}', urllib.parse.quote(part, safe=''))
-    source = urllib.parse.urlsplit(link)
-    if source.scheme != 'https' or source.username or source.password:
-        raise Pending('O endereço do catálogo precisa usar HTTPS.')
+def public_link(value):
+    """Validate a user-supplied supplier link and return its parts and bare domain."""
     try:
-        data = json.loads(request(link))
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
+        url = urllib.parse.urlsplit(value)
+        port = url.port
+    except (ValueError, TypeError, AttributeError):
+        raise Pending('Link inválido.') from None
+    host = (url.hostname or '').lower()
+    try:
+        ipaddress.ip_address(host)
+        numeric = True
+    except ValueError:
+        numeric = False
+    if (url.scheme != 'https' or url.username or url.password or port not in (None, 443)
+            or numeric or '.' not in host or len(value) > 2000
+            or host.endswith(('.local', '.internal', '.localhost'))):
+        raise Pending('Use um link completo de um site público, começando com https://.')
+    return url, host.removeprefix('www.')
+
+
+def open_public(url):
+    parts, _ = public_link(url)
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(parts.hostname, 443)}
+    except OSError:
+        raise Pending('O endereço do fornecedor não foi encontrado.') from None
+    if not all(ipaddress.ip_address(address).is_global for address in addresses):
+        raise Pending('O link aponta para um endereço de rede interna.')
+    return Page(request(url))
+
+
+def nodes(value):
+    if isinstance(value, dict):
+        yield value
+        value = list(value.values())
+    if isinstance(value, list):
+        for child in value:
+            yield from nodes(child)
+
+
+def products_in(page):
+    return [node for node in nodes(page.data) if 'Product' in str(node.get('@type', ''))]
+
+
+def structured_product(page, part):
+    return next((node for node in products_in(page) if any(
+        normalized(str(node.get(key, ''))) == part for key in ('mpn', 'sku', 'model'))), None)
+
+
+def labeled_product(page, part):
+    """Text fallback, used only when the page publishes no structured product."""
+    label = (r"(?:MFR\s*(?:#|PART\s*(?:NUMBER|NO\.?|#)?)|MPN|MANUFACTURER(?:'S)?\s*PART\s*(?:NUMBER|NO\.?|#)"
+             r'|PART\s*(?:NUMBER|NO\.?|#)|SKU|MODEL\s*(?:NUMBER|NO\.?|#)?)\s*[:#]?\s*')
+    found = re.search(label + re.escape(part) + r'(?![A-Z0-9]|[./-][A-Z0-9])', normalized(page.text))
+    return {} if found and not products_in(page) else None
+
+
+def only(values, problem):
+    if len(values) > 1:
+        raise Pending(problem)
+    return next(iter(values), None)
+
+
+def read_product(config, page, node, link):
+    entries = list(nodes(node.get('offers', [])))
+    availability = ' '.join(str(entry.get('availability', '')) for entry in entries)
+    if re.search(r'OutOfStock|SoldOut|Discontinued|BackOrder', availability) and 'InStock' not in availability:
+        return None
+    if any(str(entry.get(low)) != str(entry.get(high)) for entry in entries
+           for low, high in (('lowPrice', 'highPrice'), ('minPrice', 'maxPrice'))):
+        raise Pending('O preço muda conforme a variação. Use o link de um item específico.')
+    priced = [entry for entry in entries if entry.get('price') not in (None, '')]
+    if any(entry.get('priceCurrency', 'USD') != 'USD' for entry in priced):
+        raise Pending('O preço do produto não está em dólar.')
+    amounts = {Decimal(str(entry['price']).replace(',', '')) for entry in priced}
+    if not amounts:
+        amounts = {Decimal((first or second).replace(',', '')) for first, second in re.findall(
+            r'(?:Your Price|Our Price|Price)\s*:?\s*\$\s*([\d,]+\.\d{2})'
+            r'|\$\s*([\d,]+\.\d{2})\s*(?:/\s*|per )(?:each|ea)\b', page.text, re.I)}
+    amount = only(amounts, 'A página mostra mais de um preço para o produto.')
+    if amount is None:
+        raise Pending('Produto encontrado, mas sem preço em dólar identificável.')
+    stocks = {(int(level['value']), False) for entry in entries
+              for level in nodes(entry.get('inventoryLevel', [])) if str(level.get('value', '')).isdigit()}
+    if not stocks:
+        found = re.findall(r'(?:Quantity Available|Available Quantity|Qty\.? Available|In Stock\s*:|Stock\s*:)'
+                           r'\s*(\d[\d,]*)(?![\d.])\s*(\+?)', page.text, re.I)
+        # "12 in stock" only counts as a whole text block. Inside running text the number
+        # can be cents or a model name ("$552.46 In stock", "Mega 2560 In stock").
+        found += [match.groups() for line in page.lines if (match := re.fullmatch(
+            r'\s*(\d[\d,]*)\s*(\+?)\s+(?:in stock|available)\.?\s*', line, re.I))]
+        stocks = {(int(number.replace(',', '')), bool(plus)) for number, plus in found}
+    stock = only(stocks, 'A página mostra quantidades diferentes de estoque.')
+    if stock is None:
+        if not availability and re.search(r'\bout of stock\b', page.text, re.I):
             return None
-        raise
-    if not isinstance(data, dict):
-        raise Pending('Catálogo respondeu com formato inesperado.')
-    if normalized(data.get('partNumber', '')) != normalized(part) or data.get('currency') != 'USD':
-        raise Pending('Código exato ou moeda não confirmados no catálogo.')
-    product_url = urllib.parse.urlsplit(data.get('url', ''))
-    if (product_url.scheme != 'https' or product_url.hostname != config['product_host']
-            or product_url.username or product_url.password):
-        raise Pending('Link de produto fora do domínio cadastrado.')
-    if any(type(data.get(key)) is not int for key in ('quantity', 'unitsPerSale')):
-        raise Pending('O catálogo precisa informar saldo e peças por unidade de venda.')
-    return offer(config, Decimal(str(data['price'])), data['quantity'], product_url.geturl(),
-                 units=data['unitsPerSale'])
+        raise Pending('Produto encontrado, mas o site não informa a quantidade em estoque.')
+    return offer(config, amount, stock[0], link, at_least=stock[1])
 
 
-DRIVERS = {'motion': motion, 'smc': smc, 'json': supplier_api}
+def search_link(config, link, part, discover=True):
+    """Return (found, offer) for one link: product page, search, listing or home page."""
+    url = link.replace('{part}', urllib.parse.quote(part, safe=''))
+    page = open_public(url)
+    node = structured_product(page, part)
+    if node is not None:
+        return True, read_product(config, page, node, url)
+    here, domain = public_link(url)
+    candidates = {}
+    for href, label in page.links:
+        target = urllib.parse.urljoin(url, href).split('#')[0]
+        parsed = urllib.parse.urlsplit(target)
+        slug = urllib.parse.unquote(parsed.path).rstrip('/').rpartition('/')[2]
+        if (parsed.scheme == 'https' and (parsed.hostname or '').removeprefix('www.') == domain
+                and parsed.path != here.path
+                and (contains_part(label, part) or normalized(slug).removesuffix('.HTML') == part)):
+            candidates[target] = None
+    confirmed = []
+    for target in list(candidates)[:5]:
+        product = open_public(target)
+        node = structured_product(product, part)
+        if node is None:
+            node = labeled_product(product, part)
+        if node is not None:
+            confirmed.append((product, node, target))
+    if len(confirmed) > 1:
+        raise Pending('O site tem mais de um produto com o código pesquisado.')
+    if confirmed:
+        return True, read_product(config, *confirmed[0])
+    node = labeled_product(page, part)
+    if node is not None:
+        return True, read_product(config, page, node, url)
+    if discover and '{part}' not in link:
+        for action in nodes(page.data):
+            if action.get('@type') != 'SearchAction':
+                continue
+            target = action.get('target')
+            template = target.get('urlTemplate') if isinstance(target, dict) else target
+            if isinstance(template, str):
+                template = re.sub(r'\{(?:search_term_string|search_term|query|q)\}', '{part}', template)
+                if '{part}' in template and (urllib.parse.urlsplit(template).hostname or '').removeprefix('www.') == domain:
+                    return search_link(config, template, part, discover=False)
+    return False, None
+
+
+def site(config, part, pack, proxy=None):
+    """Generic reader. Links are tried in the order given; the first one with the part wins."""
+    failure = None
+    for link in config['links']:
+        try:
+            found, result = search_link(config, link, part)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                failure = failure or Pending(f'O site respondeu HTTP {exc.code}.')
+            continue
+        except Pending as exc:
+            failure = failure or exc
+            continue
+        if found:
+            return result
+    if failure:
+        raise failure
+    return None
+
+
+DRIVERS = {'motion': motion, 'smc': smc, 'site': site}

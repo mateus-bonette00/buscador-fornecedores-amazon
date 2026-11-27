@@ -23,7 +23,7 @@ from pathlib import Path
 
 from vpn import proton_connection
 from sheets import Sheets, sold_for
-from suppliers import DRIVERS, Page, Pending, contains_part, normalized, offer, request
+from suppliers import DRIVERS, Page, Pending, contains_part, normalized, offer, public_link, request
 
 ROOT = Path(__file__).resolve().parent
 SETTINGS_DIR = Path.home() / '.config' / 'buscador-fornecedores-amazon'
@@ -46,6 +46,67 @@ ASIN = re.compile(r'[A-Z0-9]{10}\Z')
 AMAZON_PATH = re.compile(r'/(?:dp|gp/product)/([A-Z0-9]{10})(?:/|$)', re.I)
 PART = re.compile(r'(?<![A-Z0-9./-])[A-Z0-9]+(?:[-./][A-Z0-9]+)*(?![A-Z0-9]|[./-][A-Z0-9])')
 CSV_LIMIT = 120_000
+KNOWN_DOMAINS = {'motion.com': 'motion', 'smcpneumatics.com': 'smc'}
+
+
+def supplier_rules(config, specs):
+    """Turn the links typed in the dashboard into one rule set per supplier."""
+    if not isinstance(specs, list) or not 1 <= len(specs) <= 8:
+        raise Pending('Adicione de 1 a 8 fornecedores pelos links.')
+    result = {}
+    for spec in specs:
+        links = spec.get('links') if isinstance(spec, dict) else None
+        if not isinstance(links, list) or not 1 <= len(links) <= 10:
+            raise Pending('Cada fornecedor precisa ter de 1 a 10 links.')
+        links = [str(link).strip() for link in links]
+        domains = {public_link(link)[1] for link in links}
+        if len(domains) != 1:
+            raise Pending('Os links de um fornecedor precisam ser do mesmo site.')
+        domain = domains.pop()
+        key = KNOWN_DOMAINS.get(domain, domain)
+        if key in result:
+            raise Pending(f'O site {domain} apareceu em dois fornecedores.')
+        base = config['suppliers'].get(key) if domain in KNOWN_DOMAINS else None
+        base = base or {'name': domain, 'driver': 'site', 'handling': 5, 'shipping': 40, 'minimum': 11}
+        shipping, handling = spec.get('shipping', base['shipping']), spec.get('handling', base['handling'])
+        if type(shipping) not in (int, float) or not 0 <= shipping <= 10000:
+            raise Pending(f'Informe o frete de {base["name"]} em dólar.')
+        if type(handling) is not int or not 0 <= handling <= 365:
+            raise Pending(f'Informe o prazo de {base["name"]} em dias.')
+        rules = {**base, 'links': list(dict.fromkeys(links)), 'shipping': shipping, 'handling': handling}
+        if 'tomorrow' in base:
+            rules['tomorrow'] = handling + base['tomorrow'] - base['handling']
+        result[key] = rules
+    return result
+
+
+def lookup(config, rules, part, pack, vpn=None):
+    proxy = config['smc_proxy']
+    if config.get('supplier_chrome') and rules['driver'] in ('motion', 'smc'):
+        rules = {**rules, 'browser': True}
+    if vpn is not None and rules['driver'] == 'smc':
+        vpn.require_us()
+        rules = {**rules, 'host_vpn': True}
+        proxy = None
+    return DRIVERS[rules['driver']](rules, part, pack, proxy)
+
+
+def test_supplier(config, options):
+    """Run the robot for a single part number so the user can check a link before a batch."""
+    part = normalized(str(options.get('part', '')))
+    if not 3 <= len(part) <= 80 or not PART.fullmatch(part):
+        raise Pending('Informe um part number que o fornecedor venda.')
+    (rules,) = supplier_rules(config, [options.get('supplier')]).values()
+    use_proton = rules['driver'] == 'smc' and config['smc_proton_manual']
+    try:
+        with proton_connection() if use_proton else nullcontext() as vpn:
+            result = lookup(config, rules, part, 1, vpn)
+    except (OSError, ValueError, KeyError, InvalidOperation):
+        raise Pending('Resposta do fornecedor não reconhecida.') from None
+    if result is None:
+        return {'found': False}
+    return {'found': True, 'price': str(result.price), 'stock': result.user_stock,
+            'floor': result.at_least, 'link': result.link, 'minimum': rules['minimum']}
 
 
 def asin_from(raw):
@@ -98,19 +159,17 @@ def extract(title, part_hint=''):
 
 
 def choose(offers, minimums, pack):
-    eligible = [(key, item) for key, item in offers.items() if item is not None
-                and item.user_stock >= max(pack, minimums[key])]
-    if not eligible:
-        return None
-    variants = dict(eligible)
-    if 'motion' in variants and 'smc' in variants:
-        motion, smc = variants['motion'], variants['smc']
+    eligible = {key: item for key, item in offers.items() if item is not None
+                and item.user_stock >= max(pack, minimums[key])}
+    if 'motion' in eligible and 'smc' in eligible:
+        motion, smc = eligible['motion'], eligible['smc']
         switch = smc.user_stock * 5 >= motion.user_stock * 12
         if (switch and motion.at_least) or (not switch and smc.at_least):
             raise Pending('O saldo com sinal de + não permite confirmar a relação de 2,4×.')
-        preferred = smc if switch else motion
-        return preferred
-    return max((item for _, item in eligible), key=lambda item: (item.user_stock, -item.price))
+        del eligible['motion' if switch else 'smc']
+    if not eligible:
+        return None
+    return max(eligible.values(), key=lambda item: (item.user_stock, -item.price))
 
 
 def keepa_api(config, operation, params):
@@ -208,18 +267,17 @@ class Jobs:
 
     def prepare(self, options):
         brand = str(options.get('brand', '')).strip()
-        chosen = options.get('suppliers', [])
         mode = options.get('mode', '')
         limit = options.get('limit', 8)
         if not brand or len(brand) > 80:
             raise Pending('Informe uma marca de até 80 caracteres.')
         if type(limit) is not int or not 1 <= limit <= 500:
             raise Pending('O limite do lote deve ficar entre 1 e 500.')
-        if not isinstance(chosen, list) or not chosen or any(
-                not isinstance(key, str) or key not in self.config['suppliers'] for key in chosen):
-            raise Pending('Selecione pelo menos um fornecedor cadastrado.')
         if mode not in ('demo', 'keepa', 'input'):
             raise Pending('Selecione uma fonte para o lote.')
+        # The demo is offline and always uses the two sample suppliers.
+        suppliers = ({key: self.config['suppliers'][key] for key in ('motion', 'smc')} if mode == 'demo'
+                     else supplier_rules(self.config, options.get('suppliers')))
         source = options.get('input', '')
         if not isinstance(source, str):
             raise Pending('A entrada precisa estar em texto.')
@@ -235,23 +293,21 @@ class Jobs:
             if not isinstance(batch, dict):
                 raise Pending('A consulta do Keepa deve ser um objeto JSON.')
         else:
-            if any(key not in ('motion', 'smc') for key in chosen):
-                raise Pending('A simulação contém somente Motion e SMC Pneumatics.')
             batch = [{'asin': 'B00000000' + str(n), 'title': title} for n, title in enumerate([
                 'SMC NCQ2B63-25DZ cyl, compact, npt', 'SMC Y-G04 - Pack Of 6 - Piston Rod Clevis',
                 'SMC Inch One-touch Pipe Fittings, Pack of 10 KQ2F11-35A',
             ], 1)][:limit]
         data = {'id': uuid.uuid4().hex, 'status': 'queued', 'brand': brand, 'created': time.time(),
                 'mode': mode, 'items': [], 'total': 0, 'message': ''}
-        return data, list(dict.fromkeys(chosen)), batch, limit
+        return data, suppliers, batch, limit
 
     def submit(self, options):
-        data, chosen, batch, limit = self.prepare(options)
+        data, suppliers, batch, limit = self.prepare(options)
         self.save(data)
         if self.worker_host and data['mode'] != 'demo':
             self.executor.submit(self.run_remote, data, options)
         else:
-            self.executor.submit(self.run, data, chosen, batch, limit)
+            self.executor.submit(self.run, data, suppliers, batch, limit)
         return data
 
     def run_remote(self, job, options):
@@ -277,7 +333,7 @@ class Jobs:
             job.update(status='error', message='A conexão com o servidor falhou ou o lote foi interrompido.')
             self.save(job)
 
-    def run(self, job, chosen, batch, limit, publish=None):
+    def run(self, job, suppliers, batch, limit, publish=None):
         save = self.save if publish is None else publish
         demo = job['mode'] == 'demo'
         try:
@@ -293,7 +349,7 @@ class Jobs:
             job['total'] = len(batch)
             manual_vpn = self.config['smc_proton_manual']
             use_proton = (not demo and batch and manual_vpn
-                          and any(self.config['suppliers'][key]['driver'] == 'smc' for key in chosen))
+                          and any(rules['driver'] == 'smc' for rules in suppliers.values()))
             vpn_session = proton_connection() if use_proton else nullcontext()
             if use_proton:
                 job['message'] = 'Verificando o Proton VPN no servidor.'
@@ -303,7 +359,7 @@ class Jobs:
                     job['message'] = 'Proton VPN conectado nos Estados Unidos.'
                     save(job)
                 with ThreadPoolExecutor(max_workers=3, thread_name_prefix='buscador-fornecedores-amazon-products') as pool:
-                    for item in pool.map(lambda row: self.product(row, job['brand'], chosen, demo, vpn), batch):
+                    for item in pool.map(lambda row: self.product(row, job['brand'], suppliers, demo, vpn), batch):
                         job['items'].append(item)
                         save(job)
             ready = [item for item in job['items'] if item['status'] == 'ready']
@@ -320,7 +376,7 @@ class Jobs:
                        else 'A fonte de dados retornou um erro inesperado.')
         save(job)
 
-    def product(self, item, brand, chosen, demo, vpn=None):
+    def product(self, item, brand, suppliers, demo, vpn=None):
         part_hint = item.get('part_hint', '')
         item = {'asin': item['asin'], 'title': item['title'], 'brand': brand, 'offers': {}}
         try:
@@ -329,8 +385,7 @@ class Jobs:
             offers = {}
             minimums = {}
             unconfirmed = []
-            for key in chosen:
-                config = self.config['suppliers'][key]
+            for key, config in suppliers.items():
                 minimums[key] = config['minimum']
                 try:
                     part, pack = item['part'], item['pack']
@@ -341,14 +396,7 @@ class Jobs:
                         timing = 'Tomorrow' if key == 'smc' and part == 'Y-G04' else 'Today' if key == 'smc' else 'Estoque'
                         result = offer(config, Decimal('17.85'), qty, 'https://' + domain, timing) if qty else None
                     else:
-                        proxy = self.config['smc_proxy']
-                        if self.config.get('supplier_chrome') and config['driver'] in ('motion', 'smc'):
-                            config = {**config, 'browser': True}
-                        if vpn is not None and config['driver'] == 'smc':
-                            vpn.require_us()
-                            config = {**config, 'host_vpn': True}
-                            proxy = None
-                        result = DRIVERS[config['driver']](config, part, pack, proxy)
+                        result = lookup(self.config, config, part, pack, vpn)
                 except (Pending, OSError, ValueError, KeyError, InvalidOperation) as exc:
                     item['offers'][config['name']] = {'detail': str(exc) if isinstance(exc, Pending)
                                                      else 'Resposta do fornecedor não reconhecida.'}
@@ -357,7 +405,8 @@ class Jobs:
                 offers[key] = result
                 item['offers'][config['name']] = ({'stock': result.user_stock, 'floor': result.at_least,
                                                     'price': str(result.price), 'timing': result.timing}
-                                                   if result else {'detail': 'Sem estoque elegível confirmado.'})
+                                                   if result else {'detail': 'Código não encontrado nos links.' if config['driver'] == 'site'
+                                                                 else 'Sem estoque elegível confirmado.'})
             if unconfirmed:
                 raise Pending(f'Oferta sem confirmação em {", ".join(unconfirmed)}. Confira o motivo em Fornecedor e estoque.')
             selected = choose(offers, minimums, item['pack'])
@@ -425,7 +474,8 @@ class Dashboard(BaseHTTPRequestHandler):
         if path == '/api/setup':
             config = jobs.config
             return self.respond(200, {
-                'suppliers': [{'id': key, 'name': rules['name']} for key, rules in config['suppliers'].items()],
+                'known': {domain: {key: config['suppliers'][name][key] for key in ('name', 'shipping', 'handling')}
+                          for domain, name in KNOWN_DOMAINS.items()},
                 'remote_worker': bool(jobs.worker_host),
                 'keepa': Path(config['keepa_key_file']).is_file(),
                 'sheets': Path(config['google_credentials']).is_file(),
@@ -446,7 +496,7 @@ class Dashboard(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.trusted_host():
             return self.respond(403, {'error': 'Use http://127.0.0.1 para abrir o painel local.'})
-        if self.path != '/api/jobs':
+        if self.path not in ('/api/jobs', '/api/test'):
             return self.respond(404, {'error': 'Operação não encontrada.'})
         if self.headers.get_content_type() != 'application/json':
             return self.respond(415, {'error': 'Envie os dados em JSON.'})
@@ -457,7 +507,10 @@ class Dashboard(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(size))
             if not isinstance(payload, dict):
                 raise Pending('Envie os dados do lote em um objeto JSON.')
-            self.respond(202, self.server.jobs.submit(payload))
+            if self.path == '/api/test':
+                self.respond(200, test_supplier(self.server.jobs.config, payload))
+            else:
+                self.respond(202, self.server.jobs.submit(payload))
         except Pending as exc:
             self.respond(400, {'error': str(exc)})
         except (ValueError, UnicodeError):
@@ -486,13 +539,13 @@ def run_job(config, state):
             except BlockingIOError:
                 raise Pending('O servidor já está executando outro lote. Tente novamente ao terminar.') from None
             jobs = Jobs(config, state)
-            job, chosen, batch, limit = jobs.prepare(options)
+            job, suppliers, batch, limit = jobs.prepare(options)
 
             def publish(data):
                 jobs.save(data)
                 send(data)
 
-            jobs.run(job, chosen, batch, limit, publish)
+            jobs.run(job, suppliers, batch, limit, publish)
     except (Pending, ValueError) as exc:
         send({'status': 'error', 'items': [], 'total': 0,
               'message': str(exc) if isinstance(exc, Pending) else 'Dados do lote inválidos.'})

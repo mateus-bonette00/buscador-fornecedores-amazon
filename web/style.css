@@ -43,9 +43,25 @@ input:not([type=checkbox]), textarea, select { width: 100%; min-height: 2.75rem;
 textarea { resize: vertical; }
 small { display: block; margin-top: .3rem; }
 fieldset { border: 0; padding: 0; margin: 0; }
-.supplier-list { display: flex; flex-wrap: wrap; gap: .4rem .85rem; }
-.supplier-list label { display: flex; align-items: center; gap: .4rem; min-height: 2.75rem; }
-input[type=checkbox] { accent-color: var(--accent); width: 1.1rem; height: 1.1rem; }
+fieldset { min-width: 0; }
+.add-row, .test-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: end; }
+.secondary, .quiet { min-height: 2.75rem; padding: .5rem .9rem; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); font-weight: 650; cursor: pointer; }
+.secondary:hover, .quiet:hover { border-color: var(--accent); }
+.secondary:disabled { opacity: .55; cursor: default; }
+.quiet { background: none; font-size: .8rem; color: var(--muted); }
+.empty { margin-top: .8rem; padding: .9rem; border: 1px dashed var(--line); border-radius: 7px; font-size: .85rem; }
+.supplier-list, .link-list { list-style: none; padding: 0; }
+.supplier-list { margin: .8rem 0 0; display: grid; gap: .7rem; }
+.supplier { padding: .8rem; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); min-width: 0; }
+.supplier-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem; }
+.link-list { margin: .4rem 0; }
+.link-list li { display: flex; align-items: center; justify-content: space-between; gap: .6rem; border-bottom: 1px solid var(--line); padding-block: .25rem; }
+.link-list span { font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.terms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; margin-block: .6rem; }
+.test-result { margin-top: .5rem; font-size: .85rem; overflow-wrap: anywhere; }
+.test-result:empty { display: none; }
+.test-result.ok { color: var(--accent); }
+.test-result.error { color: var(--warning); }
 .primary { justify-self: start; border: 0; border-radius: 7px; min-height: 2.75rem; padding: .5rem 1.05rem; background: var(--accent); color: #102d23; font-weight: 750; cursor: pointer; }
 .primary:disabled { opacity: .55; cursor: default; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
