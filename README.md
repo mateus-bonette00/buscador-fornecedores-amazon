@@ -1,6 +1,6 @@
 # Buscador de Fornecedores Amazon
 
-> Painel que lê uma lista de anúncios da Amazon dos EUA, consulta preço e estoque em fornecedores, calcula o preço de venda e grava o resultado no Google Sheets. É um robô que desenvolvi para substituir uma pesquisa de revenda feita à mão, pensado para rodar no meu homelab.
+> Robô com painel web que puxa anúncios da Amazon dos EUA pelo Keepa (CSV ou API), consulta preço e estoque em fornecedores, calcula o preço de venda e grava na planilha do Google Sheets o lucro, o ROI e a margem para Amazon FBM e FBA. Desenvolvi para substituir uma pesquisa de revenda feita à mão e rodar no meu homelab.
 
 [![testes](https://github.com/mateus-bonette00/buscador-fornecedores-amazon/actions/workflows/ci.yml/badge.svg)](https://github.com/mateus-bonette00/buscador-fornecedores-amazon/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
@@ -8,9 +8,9 @@
 [![Google Sheets API](https://img.shields.io/badge/Google%20Sheets-API%20v4-34A853.svg)](https://developers.google.com/workspace/sheets/api)
 [![Chrome Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3-4285F4.svg)](chrome-extension/manifest.json)
 
-![Painel do app em modo simulação](docs/painel.png)
+![Demonstração do fluxo completo: cadastro de fornecedores, teste por código, execução do lote, filtros, tema escuro e planilha no Google Sheets](docs/demonstracao.gif)
 
-A imagem mostra o modo Simulação, que usa dados de exemplo. Os testes automatizados também usam respostas simuladas. O repositório não tem dados nem nomes do negócio original.
+A demonstração acima usa dados de exemplo para mostrar o fluxo de ponta a ponta: cadastro e teste de fornecedores, importação de CSV, aplicação da regra de estoque, filtros, tema escuro e gravação das colunas A a T no Google Sheets. Os testes automatizados também usam respostas simuladas. O repositório não tem dados nem nomes do negócio original.
 
 ## Roda no meu homelab
 
@@ -25,16 +25,30 @@ Há dois modos. No primeiro, o painel roda no notebook e envia o trabalho por SS
 
 ## O que ele faz
 
-O app só grava um produto quando consegue confirmar a oferta. Se o título tem mais de um código possível, se um dos fornecedores não confirma o código exato ou se falta estoque, o produto fica pendente no painel com o motivo escrito.
+Quem revende produtos na Amazon dos EUA normalmente repete o mesmo trabalho à mão: exporta ou consulta produtos no Keepa, abre cada anúncio para achar o código da peça, procura esse código em fornecedores, confere se há estoque, faz as contas de lucro FBM e FBA e lança tudo na planilha.
+
+Este robô automatiza esse caminho e só grava um produto quando consegue confirmar a oferta. Se o título tem mais de um código possível, se um dos fornecedores não confirma o código exato ou se falta estoque, o produto fica pendente no painel com o motivo escrito.
 
 Quando dá para confirmar, ele:
 
-- separa o código da peça e o tamanho do pack em títulos como `Pack of 10 KQ2F11-35A`
+- recebe os produtos pelo Keepa (CSV exportado ou consulta direta na API do Keepa) ou por uma lista de ASINs e links da Amazon
+- busca pelo Keepa os títulos que faltam e separa o código da peça e o tamanho do pack em títulos como `Pack of 10 KQ2F11-35A`
 - compara os fornecedores e escolhe um pelas regras de estoque
-- calcula o preço de venda
-- atualiza a linha do ASIN na planilha, ou cria uma nova, e relê para conferir preço e margem
+- calcula o preço de venda e grava a linha do ASIN no Google Sheets com as fórmulas de lucro, ROI e margem para FBM (envio pelo vendedor) e FBA (envio pela Amazon)
+- relê a planilha depois de gravar para conferir se o preço e as margens FBM e FBA bateram
 
 Os lotes rodam em segundo plano, com três produtos consultados por vez, e o histórico fica em SQLite.
+
+## Painel web
+
+![Painel do app em modo simulação](docs/painel.png)
+
+O painel organiza a pesquisa em duas áreas: o formulário de novo lote ao lado do histórico de execuções em SQLite, e abaixo a tabela de resultados.
+
+- No topo, uma barra mostra o estado das integrações (`Keepa API`, `Google Sheets`, `VPN SMC EUA` ou `Servidor homelab`). Se o navegador perder contato com o backend local, aparece um aviso com botão para tentar novamente.
+- A interface abre em tema claro por padrão, acompanha a preferência do sistema operacional e permite alternar entre tema claro e escuro pelo botão no topo.
+- A tabela exibe `Part Number`, `ASIN`, ofertas por fornecedor e a coluna `Lucro FBM / FBA` lado a lado. Na simulação aparecem as estimativas padrão; após a gravação, os valores são trocados pelos números conferidos na planilha.
+- Filtros rápidos (`Todos`, `Confirmados`, `Pendentes`) mostram a contagem de cada grupo sem recarregar o lote, e cada execução do histórico atualiza a URL (`?job=<id>`) para funcionar com os botões Voltar e Avançar do navegador.
 
 ## Como foi feito
 
@@ -72,8 +86,8 @@ O arquivo editável do diagrama é o [`docs/arquitetura.html`](docs/arquitetura.
 4. De cada título saem o código da peça e o tamanho do pack.
 5. Os conectores consultam os fornecedores por HTTPS ou por uma aba do Chrome.
 6. O app escolhe o fornecedor e calcula o preço de venda.
-7. No fim do lote, os produtos aprovados vão para o Google Sheets, um por linha.
-8. O app relê as linhas e só marca um produto como gravado se o preço e a margem baterem.
+7. No fim do lote, os produtos aprovados vão para o Google Sheets, um por linha, com os cálculos de lucro, ROI e margem para FBM e FBA.
+8. O app relê as linhas e só marca um produto como gravado se o preço e as margens FBM e FBA baterem.
 
 ### Regras de negócio
 
@@ -84,9 +98,10 @@ O arquivo editável do diagrama é o [`docs/arquitetura.html`](docs/arquitetura.
 | Escolha entre as lojas | Motion, até o estoque da SMC chegar a 2,4 vezes o da Motion |
 | Prazo | 5 dias na Motion. Na SMC, 6 com envio no mesmo dia e 7 com envio no dia seguinte |
 | Frete | US$ 40 na Motion e US$ 70 na SMC |
-| Preço de venda | Margem de cerca de 24%, com taxa de 15% da Amazon e US$ 7 de preparo |
+| Preço de venda e lucro FBM | Margem de cerca de 24%, com comissão de 15% da Amazon e US$ 7 de preparo |
+| Lucro FBA | Mesma base do FBM, descontando também a taxa FBA da Amazon (padrão US$ 6, editável por linha na planilha) |
 
-Um exemplo com a Motion: o custo de US$ 17,85, mais US$ 7 de preparo e US$ 40 de frete, dá US$ 64,85. O app calcula a venda em US$ 106,31. Descontada a taxa de cerca de US$ 15,95, o lucro fica perto de US$ 25,51.
+Um exemplo com a Motion: o custo de US$ 17,85, mais US$ 7 de preparo e US$ 40 de frete, dá US$ 64,85. O app calcula a venda em US$ 106,31. Descontada a comissão de 15% da Amazon (US$ 15,95), o lucro FBM fica perto de US$ 25,51 (margem de 24%). No FBA, descontando a taxa FBA padrão de US$ 6, o lucro fica perto de US$ 19,51 (margem de 18,35%). As fórmulas da planilha calculam lucro, ROI e margem dos dois modelos automaticamente.
 
 Os fornecedores usados aqui vendem por pacote, por isso o preço exibido já é o custo do pack. O app parte do princípio de que o pacote da loja é igual ao do anúncio. Ele não consulta o preço dos concorrentes.
 
@@ -122,7 +137,7 @@ mkdir -p ~/.config/buscador-fornecedores-amazon
 cp examples/settings.example.json ~/.config/buscador-fornecedores-amazon/settings.json
 ```
 
-Preencha `spreadsheet_id` e `sheet_id`. O [`docs/PLANILHA.md`](docs/PLANILHA.md) explica as colunas e como criar a conta de serviço.
+Preencha `spreadsheet_id` e `sheet_id`. O [`docs/PLANILHA.md`](docs/PLANILHA.md) explica as colunas A a T e como criar a conta de serviço.
 
 ### 4. Escolher de onde vêm os produtos
 
@@ -136,7 +151,7 @@ No painel, cole os links dos sites onde o robô deve procurar. Pode ser a págin
 
 ![Fornecedores adicionados por link no painel](docs/fornecedores.png)
 
-Antes do lote, use "Testar" com um part number que o site venda. O painel mostra o preço e a quantidade que leu, ou o motivo de não ter conseguido. Se você colar o link de uma busca feita com esse mesmo código, o teste troca o código por `{part}` e o robô passa a repetir a busca para cada produto.
+Antes do lote, use "Testar" com um part number que o site venda. O painel mostra o preço e a quantidade que leu, ou o motivo de não ter conseguido. Se você colar o link de uma busca feita com esse mesmo código, o teste troca o código por `{part}`, evita links duplicados e passa a repetir a busca para cada produto. O teste atualiza só o fornecedor testado, mantendo o que você estiver digitando nos demais.
 
 Motion e SMC têm leitores próprios. Os outros sites passam pelo leitor genérico, que só confirma uma oferta quando a página traz:
 
@@ -162,19 +177,19 @@ A consulta à SMC precisa sair por um IP dos Estados Unidos. Você pode informar
 buscador-fornecedores-amazon/
 ├── app.py                       # Painel local, fila de lotes, SQLite e escolha do fornecedor
 ├── suppliers.py                 # Leitores da Motion, da SMC e leitor genérico
-├── sheets.py                    # Preço de venda e gravação no Google Sheets
+├── sheets.py                    # Preço de venda e gravação no Google Sheets (colunas A a T)
 ├── vpn.py                       # Confere a VPN antes de consultar a SMC
 ├── chrome_native.py             # Ponte entre o Python e a extensão
-├── test_app.py                  # Testes
+├── test_app.py                  # Testes automatizados
 ├── chrome-extension/
 │   ├── manifest.json            # Manifest V3
 │   └── worker.js                # Abre a aba, lê os campos e fecha
-├── web/                         # Painel em HTML, CSS e JavaScript
+├── web/                         # Painel em HTML, CSS, JavaScript e favicon SVG
 ├── ops/
 │   ├── start.sh                 # Inicia o app, local ou com servidor remoto
 │   ├── setup_chrome.py          # Registra o host da extensão
 │   └── buscador-fornecedores-amazon.service
-├── docs/                        # Planilha, diagrama e imagens
+├── docs/                        # Planilha, diagrama, capturas e GIF de demonstração
 ├── examples/                    # CSV, planilha modelo e configuração de exemplo
 ├── .github/workflows/ci.yml     # Testes no GitHub Actions
 └── package.json
@@ -188,12 +203,13 @@ buscador-fornecedores-amazon/
 | Frete e prazo | Campos de cada fornecedor no painel |
 | Estoque mínimo | `supplier_rules` no `app.py`, ou `suppliers` no `settings.json` para Motion e SMC |
 | Preparo de um produto já gravado | Coluna "Preparo (US$)" da planilha |
-| Preparo padrão | `app.py` e `sheets.py` |
-| Margem e taxa da Amazon | `sheets.py`: `sold_for`, `formulas` e a conferência da margem |
+| Taxa FBA de um produto já gravado | Coluna "Taxa FBA (US$)" da planilha |
+| Preparo e taxa FBA padrão | `DEFAULT_PREP` e `DEFAULT_FBA_FEE` no `sheets.py` (e `app.py` para o preparo) |
+| Margem e taxa da Amazon | `sheets.py`: `sold_for`, `formulas` e a conferência das margens FBM e FBA |
 | Regra entre Motion e SMC | Função `choose` no `app.py` |
 | Colunas da planilha | `sheets.py` e `docs/PLANILHA.md` |
 | Leitor próprio para outro site | `DRIVERS` no `suppliers.py` e `KNOWN_DOMAINS` no `app.py` |
-| Visual do painel | `web/style.css` |
+| Visual do painel e temas | `web/style.css` |
 | Porta | `python3 app.py --port 9000` |
 
 ## Testes
@@ -203,14 +219,14 @@ npm test                    # testes em Python e sintaxe do app.js
 python3 -m unittest -v      # só os testes em Python
 ```
 
-São 16 testes. Um cobre o teste de fornecedor no homelab. Cinco cobrem os links de fornecedor: leitor genérico, agrupamento e bloqueio de endereços internos. Seis cobrem leitura do título, preço de venda, escolha do fornecedor, prazo da SMC, código exato na Motion e ASINs repetidos. Dois cobrem a gravação na planilha e dois, a checagem da VPN. O GitHub Actions roda os testes a cada push e pull request.
+São 19 testes em Python, além da checagem de sintaxe de `web/app.js` e `chrome-extension/worker.js` no CI. Um cobre o teste de fornecedor no homelab. Dois cobrem o painel (`total` inicial na preparação de lotes conhecidos e entrega do favicon sem 404). Cinco cobrem os links de fornecedor: leitor genérico, agrupamento e bloqueio de endereços internos. Seis cobrem leitura do título, preço de venda, escolha do fornecedor, prazo da SMC, código exato na Motion e ASINs repetidos. Três cobrem a gravação na planilha com as fórmulas e margens FBM e FBA, e dois cobrem a checagem da VPN. O GitHub Actions roda os testes a cada push e pull request.
 
 Eles não abrem o painel nem a extensão. A leitura das lojas depende do layout das páginas, e um site pode recusar consultas automáticas. Nesses casos o produto fica pendente. Respeite os termos de uso de cada site.
 
 ## Roadmap
 
+- [x] Gravar um GIF de demonstração
 - [ ] Testes automatizados do painel e da extensão no navegador
-- [ ] Gravar um GIF de demonstração
 - [ ] Exportar o resultado em CSV pelo painel
 
 ## Instalar no homelab

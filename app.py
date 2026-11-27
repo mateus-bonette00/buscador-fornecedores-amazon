@@ -298,7 +298,7 @@ class Jobs:
                 'SMC Inch One-touch Pipe Fittings, Pack of 10 KQ2F11-35A',
             ], 1)][:limit]
         data = {'id': uuid.uuid4().hex, 'status': 'queued', 'brand': brand, 'created': time.time(),
-                'mode': mode, 'items': [], 'total': 0, 'message': ''}
+                'mode': mode, 'items': [], 'total': len(batch) if isinstance(batch, list) else 0, 'message': ''}
         return data, suppliers, batch, limit
 
     def submit(self, options):
@@ -426,7 +426,7 @@ class Jobs:
                                                    if result else {'detail': 'Código não encontrado nos links.' if config['driver'] == 'site'
                                                                  else 'Sem estoque elegível confirmado.'})
             if unconfirmed:
-                raise Pending(f'Oferta sem confirmação em {", ".join(unconfirmed)}. Confira o motivo em Fornecedor e estoque.')
+                raise Pending(f'Oferta sem confirmação em {", ".join(unconfirmed)}. Confira o motivo em Fornecedores e estoque.')
             selected = choose(offers, minimums, item['pack'])
             if selected is None:
                 raise Pending('Nenhum fornecedor tem saldo suficiente para este anúncio.')
@@ -485,10 +485,12 @@ class Dashboard(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         jobs = self.server.jobs
         assets = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
-                  '/style.css': ('style.css', 'text/css')}
+                  '/style.css': ('style.css', 'text/css'), '/favicon.svg': ('favicon.svg', 'image/svg+xml')}
         if path in assets:
             name, content_type = assets[path]
             return self.respond(200, (ROOT / 'web' / name).read_bytes(), content_type + '; charset=utf-8')
+        if path == '/favicon.ico':
+            return self.respond(204, b'', 'image/x-icon')
         if path == '/api/setup':
             config = jobs.config
             return self.respond(200, {

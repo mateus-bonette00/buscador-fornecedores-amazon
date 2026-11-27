@@ -15,10 +15,13 @@ from suppliers import Pending, request
 # Column layout of the destination tab (see docs/PLANILHA.md). Index 0 is column A.
 COLUMNS = ('ASIN', 'Marca', 'Peça', 'Pack', 'Fornecedor', 'Estoque', 'Prazo (dias)', 'Link',
            'Custo (US$)', 'Preparo (US$)', 'Frete (US$)', 'Preço de venda (US$)',
-           'Taxa Amazon (US$)', 'Lucro (US$)', 'ROI', 'Margem')
+           'Taxa Amazon (US$)', 'Lucro FBM (US$)', 'ROI FBM', 'Margem FBM',
+           'Taxa FBA (US$)', 'Lucro FBA (US$)', 'ROI FBA', 'Margem FBA')
 HEADERS = dict(enumerate(COLUMNS))
-ASIN_COL, COST, PREP, SHIPPING, PRICE, MARGIN = 0, 8, 9, 10, 11, 15
-LAST_COL = 'P'
+ASIN_COL, COST, PREP, SHIPPING, PRICE, MARGIN_FBM, FBA_FEE, MARGIN_FBA = 0, 8, 9, 10, 11, 15, 16, 19
+DEFAULT_PREP = 7
+DEFAULT_FBA_FEE = 6
+LAST_COL = 'T'
 
 
 def field(row, col):
@@ -39,6 +42,10 @@ def formulas(row):
              f'=L{row}-I{row}-J{row}-K{row}-M{row}'),
         14: (f'=IF(I{row}="";"";N{row}/I{row})', f'=N{row}/I{row}'),
         15: (f'=IF(L{row}="";"";N{row}/L{row})', f'=N{row}/L{row}'),
+        17: (f'=IF(I{row}="";"";L{row}-I{row}-J{row}-K{row}-M{row}-Q{row})',
+             f'=L{row}-I{row}-J{row}-K{row}-M{row}-Q{row}'),
+        18: (f'=IF(I{row}="";"";R{row}/I{row})', f'=R{row}/I{row}'),
+        19: (f'=IF(L{row}="";"";R{row}/L{row})', f'=R{row}/L{row}'),
     }
 
 
@@ -53,7 +60,7 @@ def plan_rows(grid, products):
         if asin:
             by_asin.setdefault(asin, []).append(index)
         elif not any(field(row, col) not in ('', None) for col in range(len(COLUMNS))
-                     if col != PREP and col not in formulas(index)):
+                     if col not in (PREP, FBA_FEE) and col not in formulas(index)):
             available.append(index)
 
     tail = max(2, len(grid) + 1)
@@ -76,7 +83,10 @@ def plan_rows(grid, products):
         mismatch = any(field(row, col) and str(field(row, col)).strip() not in allowed
                        for col, allowed in defaults.items())
         prep = field(row, PREP)
-        if mismatch or (prep != '' and (not isinstance(prep, (int, float)) or prep < 0)):
+        fba_fee = field(row, FBA_FEE)
+        invalid_prep = prep != '' and (not isinstance(prep, (int, float)) or isinstance(prep, bool) or prep < 0)
+        invalid_fba = fba_fee != '' and (not isinstance(fba_fee, (int, float)) or isinstance(fba_fee, bool) or fba_fee < 0)
+        if mismatch or invalid_prep or invalid_fba:
             rejected.append((product, f'Taxas ou fórmula diferentes na linha {index}.'))
             continue
         cost, shipping = Decimal(str(product['price'])), Decimal(str(product['shipping']))
@@ -84,10 +94,12 @@ def plan_rows(grid, products):
             ASIN_COL: product['asin'], 1: product['brand'], 2: product['part'], 3: product['pack'],
             4: product['supplier'], 5: product['stock'], 6: product['handling'], 7: product['link'],
             COST: cost, SHIPPING: shipping,
-            PRICE: sold_for(cost, Decimal(str(prep if prep != '' else 7)), shipping),
+            PRICE: sold_for(cost, Decimal(str(prep if prep != '' else DEFAULT_PREP)), shipping),
         }
         if prep == '':
-            changes[PREP] = 7
+            changes[PREP] = DEFAULT_PREP
+        if fba_fee == '':
+            changes[FBA_FEE] = DEFAULT_FBA_FEE
         for col, choices in defaults.items():
             if not field(row, col):
                 changes[col] = {'formulaValue': choices[-1]}
@@ -170,16 +182,21 @@ class Sheets:
         verified = []
         for product, row, changes in merged:
             cells = field(values, row - first)
-            margin = field(cells, MARGIN)
+            margin_fbm = field(cells, MARGIN_FBM)
+            margin_fba = field(cells, MARGIN_FBA)
             prep = field(cells, PREP)
+            fba_fee = field(cells, FBA_FEE)
             if (field(cells, ASIN_COL) != product['asin'] or field(cells, PRICE) != float(changes[PRICE])
-                    or not isinstance(margin, (float, int)) or not isinstance(prep, (float, int))):
+                    or not isinstance(margin_fbm, (float, int)) or not isinstance(margin_fba, (float, int))
+                    or not isinstance(prep, (float, int)) or not isinstance(fba_fee, (float, int))):
                 rejected.append((product, f'Gravação sem confirmação de preço e margem na linha {row}.'))
                 continue
-            expected = Decimal('0.85') - (changes[COST] + changes[SHIPPING] + Decimal(str(prep))) / changes[PRICE]
-            if abs(Decimal(str(margin)) - expected) > Decimal('0.000001'):
+            expected_fbm = Decimal('0.85') - (changes[COST] + changes[SHIPPING] + Decimal(str(prep))) / changes[PRICE]
+            expected_fba = expected_fbm - Decimal(str(fba_fee)) / changes[PRICE]
+            if (abs(Decimal(str(margin_fbm)) - expected_fbm) > Decimal('0.000001')
+                    or abs(Decimal(str(margin_fba)) - expected_fba) > Decimal('0.000001')):
                 rejected.append((product, f'A margem calculada na planilha divergiu na linha {row}.'))
                 continue
-            product.update(sold_for=str(changes[PRICE]), sheet_row=row, margin=margin)
+            product.update(sold_for=str(changes[PRICE]), sheet_row=row, margin=margin_fbm, fba_margin=margin_fba)
             verified.append((product, row, changes))
         return verified, rejected

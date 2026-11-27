@@ -165,11 +165,12 @@ class Homelab(unittest.TestCase):
 
 class SheetsIntegration(unittest.TestCase):
     def setUp(self):
-        self.grid = [[''] * 16 for _ in range(3)]
+        self.grid = [[''] * 20 for _ in range(3)]
         for col, header in HEADERS.items():
             self.grid[0][col] = header
         self.grid[1][0] = 'B000000001'
         self.grid[1][9] = 7
+        self.grid[1][16] = 6
         for col, options in formulas(2).items():
             self.grid[1][col] = options[0]
         self.item = {'asin': 'B000000001', 'brand': 'SMC', 'part': 'Y-G04', 'pack': 6, 'price': '80.49',
@@ -183,23 +184,76 @@ class SheetsIntegration(unittest.TestCase):
         self.assertEqual(row, 2)
         self.assertEqual(values[8], Decimal('80.49'))
         self.assertEqual(values[11], Decimal('209.00'))
-        self.assertFalse(set(values).intersection({9, 12, 13, 14, 15}))
+        self.assertFalse(set(values).intersection({9, 12, 13, 14, 15, 16, 17, 18, 19}))
         duplicate = self.grid[1].copy()
         self.grid.append(duplicate)
         self.assertEqual(len(plan_rows(self.grid, [self.item])[1]), 1)
+
+    def test_new_asin_fills_fbm_and_fba_defaults_and_formulas(self):
+        new_item = dict(self.item, asin='B000000002')
+        rows, rejected = plan_rows(self.grid, [new_item])
+        self.assertEqual(rejected, [])
+        _, row, values = rows[0]
+        self.assertEqual(row, 3)
+        self.assertEqual((values[9], values[16]), (7, 6))
+        self.assertEqual(values[13], {'formulaValue': '=L3-I3-J3-K3-M3'})
+        self.assertEqual(values[17], {'formulaValue': '=L3-I3-J3-K3-M3-Q3'})
 
     @patch.object(Sheets, 'auth', return_value='test-token')
     @patch('sheets.request')
     def test_checks_written_row_and_actual_margin(self, fetch, _auth):
         import json
+        fba_margin = 44.16 / 209
         fetch.side_effect = [
             json.dumps({'sheets': [{'properties': {'sheetId': 4, 'title': 'Teste', 'gridProperties': {'rowCount': 10}}}]}),
             json.dumps({'values': self.grid}), '{}',
-            json.dumps({'values': [['B000000001', 'SMC', 'Y-G04', 6, 'Motion', 15, 5, 'link', 80.49, 7, 40, 209, 31.35, 50.16, 0.62, .24]]}),
+            json.dumps({'values': [['B000000001', 'SMC', 'Y-G04', 6, 'Motion', 15, 5, 'link', 80.49, 7, 40, 209,
+                                    31.35, 50.16, 0.62, .24, 6, 44.16, 0.55, fba_margin]]}),
         ]
         rows, rejected = Sheets('/test', 'test', 4).commit([self.item])
         self.assertEqual(rejected, [])
-        self.assertEqual((rows[0][1], self.item['margin']), (2, .24))
+        self.assertEqual((rows[0][1], self.item['margin'], round(self.item['fba_margin'], 6)),
+                         (2, .24, round(fba_margin, 6)))
+
+
+class DashboardTests(unittest.TestCase):
+    def test_prepare_sets_initial_total_for_known_batches(self):
+        with tempfile.TemporaryDirectory() as folder:
+            jobs = Jobs(DEFAULTS, Path(folder))
+            demo_job, _, _, _ = jobs.prepare({'brand': 'SMC', 'mode': 'demo', 'limit': 8})
+            self.assertEqual(demo_job['total'], 3)
+            input_job, _, _, _ = jobs.prepare({
+                'brand': 'SMC', 'mode': 'input', 'limit': 8,
+                'input': 'B000000001\nB000000002',
+                'suppliers': [{'links': ['https://www.motion.com'], 'shipping': 40, 'handling': 5}],
+            })
+            self.assertEqual(input_job['total'], 2)
+            keepa_job, _, _, _ = jobs.prepare({
+                'brand': 'SMC', 'mode': 'keepa', 'limit': 8, 'input': '{}',
+                'suppliers': [{'links': ['https://www.motion.com'], 'shipping': 40, 'handling': 5}],
+            })
+            self.assertEqual(keepa_job['total'], 0)
+
+    def test_serves_favicon_without_404(self):
+        import threading
+        import urllib.request
+        from http.server import ThreadingHTTPServer
+        from app import Dashboard
+
+        with tempfile.TemporaryDirectory() as folder:
+            with ThreadingHTTPServer(('127.0.0.1', 0), Dashboard) as server:
+                server.jobs = Jobs(DEFAULTS, Path(folder))
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    base = f'http://127.0.0.1:{server.server_port}'
+                    with urllib.request.urlopen(base + '/favicon.svg', timeout=5) as resp:
+                        self.assertEqual(resp.status, 200)
+                        self.assertIn('image/svg+xml', resp.headers.get('Content-Type', ''))
+                    with urllib.request.urlopen(base + '/favicon.ico', timeout=5) as resp:
+                        self.assertEqual(resp.status, 204)
+                finally:
+                    server.shutdown()
 
 
 if __name__ == '__main__':
