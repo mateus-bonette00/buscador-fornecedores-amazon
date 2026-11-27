@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Buscador de Fornecedores Amazon",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAomqmvPaOrEu4pwwBXJat4JEVUDMJxxoKaF8Fg2k6dfqGq6O/k+9F+i0flkhFs5vChy23Tisu+USBYIV7zGQeuf16o5e18xCL9t/aP6waYPYr4XwsfJkJapKtQTtDg1AChTD+cXB8uU9BdNUcJpLrUbe/FuBYScLt+7ISEeaTBmxVFuySs37i3WFr/iCMC0bfXmt9shq42lnebc3ofVTNgT2QaUHIR3S7ZIszfQHu1HvERhgPQRnUCrE89V3CWHuL1ydjcwvbP3ss0jpst3gltHCATpYQe/JDaod2FrwjO01Qj8W20wKFL1JjbDTQqeKpHp+U11AL/BXqJszgsErAHwIDAQAB",
+  "minimum_chrome_version": "120",
+  "description": "Consulta produtos da Motion e da SMC Pneumatics na sessão deste Chrome.",
+  "permissions": [
+    "alarms",
+    "nativeMessaging",
+    "scripting",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "https://www.motion.com/*",
+    "https://www.smcpneumatics.com/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  }
+}

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#13252b">
+  <title>Buscador de Fornecedores Amazon</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Ir para o conteúdo</a>
+  <header class="topbar">
+    <div class="frame topbar-inner">
+      <a class="wordmark" href="/"> <span class="mark" aria-hidden="true">B</span> Buscador de Fornecedores Amazon</a>
+      <span class="market">Amazon EUA</span>
+    </div>
+  </header>
+  <main id="main" class="frame">
+    <section class="intro" aria-labelledby="heading">
+      <h1 id="heading">Pesquisa de produtos</h1>
+      <p>Consulte estoque e preço por part number e grave os produtos confirmados na planilha.</p>
+      <ul id="connections" class="connections" aria-label="Configuração das integrações"></ul>
+    </section>
+    <div class="workspace">
+      <section class="panel" aria-labelledby="new-heading">
+        <h2 id="new-heading">Novo lote</h2>
+        <form id="job-form">
+          <div class="form-row">
+            <label>Marca <input name="brand" value="SMC" placeholder="Ex.: SMC" maxlength="80" required></label>
+            <label>Limite <input name="limit" type="number" value="8" min="1" max="500" required></label>
+          </div>
+          <label>Origem
+            <select name="mode" id="mode">
+              <option value="demo">Simulação</option>
+              <option value="keepa">Consulta no Keepa</option>
+              <option value="input">CSV do Keepa, ASINs ou links Amazon</option>
+            </select>
+          </label>
+          <div id="source" hidden>
+            <label id="file-label" hidden>Importar CSV <input type="file" id="file" accept=".csv,text/csv"></label>
+            <label><span id="source-label">Dados de entrada</span><textarea name="input" rows="4" aria-describedby="source-hint"></textarea></label>
+            <small id="source-hint"></small>
+          </div>
+          <fieldset>
+            <legend>Fornecedores</legend>
+            <div id="suppliers" class="supplier-list"></div>
+          </fieldset>
+          <p id="form-note" class="note">A simulação usa dados de exemplo.</p>
+          <button id="run" class="primary" type="submit" disabled>Iniciar simulação</button>
+        </form>
+      </section>
+      <aside class="panel history-panel" aria-labelledby="history-heading">
+        <h2 id="history-heading">Histórico</h2>
+        <ul id="history" class="history"><li class="muted">Nenhum lote por aqui.</li></ul>
+      </aside>
+    </div>
+    <section id="results" class="panel results" aria-labelledby="results-heading" hidden>
+      <div class="results-head">
+        <div><h2 id="results-heading">Resultado do lote</h2><p id="job-progress" role="status"></p></div>
+        <span id="job-status" class="pill"></span>
+      </div>
+      <div id="summary" class="summary"></div>
+      <p id="job-message" class="note" hidden></p>
+      <div class="table-scroll" tabindex="0" aria-label="Resultados por produto">
+        <table>
+          <thead><tr><th>Produto</th><th>Pack</th><th>Fornecedor e estoque</th><th>Preço</th><th>Preço de venda</th><th>Situação</th></tr></thead>
+          <tbody id="product-list"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

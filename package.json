@@ -1,0 +1,8 @@
+{
+  "name": "buscador-fornecedores-amazon",
+  "private": true,
+  "scripts": {
+    "start": "sh ops/start.sh",
+    "test": "python3 -m unittest -v && node --check web/app.js"
+  }
+}
