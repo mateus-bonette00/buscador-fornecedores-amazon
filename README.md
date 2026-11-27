@@ -1,6 +1,6 @@
 # Buscador de Fornecedores Amazon
 
-> Fiz este projeto para um amigo, para automatizar a pesquisa de fornecedores de produtos da Amazon dos EUA. Você passa uma lista de anúncios, e o app identifica o código de cada peça, consulta preço e estoque nas lojas, calcula por quanto vender e grava o resultado no Google Sheets.
+> Painel que lê uma lista de anúncios da Amazon dos EUA, consulta preço e estoque em fornecedores, calcula o preço de venda e grava o resultado no Google Sheets. Eu o desenvolvi para substituir uma pesquisa de revenda que era feita à mão.
 
 [![testes](https://github.com/mateus-bonette00/buscador-fornecedores-amazon/actions/workflows/ci.yml/badge.svg)](https://github.com/mateus-bonette00/buscador-fornecedores-amazon/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
@@ -34,6 +34,18 @@ A integração com o Google Sheets não usa SDK. O app assina o JWT da conta de 
 Para ler páginas de fornecedores no navegador, fiz uma extensão do Chrome que conversa com o Python por Native Messaging e um socket Unix. Ela envia apenas os campos que o app precisa ler.
 
 O painel atende em `127.0.0.1`, confere os cabeçalhos `Host` e `Origin`, define uma Content Security Policy e recusa redirecionamento para outro domínio. Também dá para deixar o painel no seu computador e executar os lotes em um servidor por SSH.
+
+## Decisões de engenharia
+
+**Recusar em caso de dúvida.** Preferi deixar um produto pendente a gravar uma oferta errada na planilha. Por isso cada pendência mostra o motivo.
+
+**Sem dependências no backend.** Escrevi tudo com a biblioteca padrão do Python. Assim o projeto roda sem ambiente virtual e a superfície de manutenção fica menor.
+
+**JWT assinado com OpenSSL.** Em vez de instalar o SDK do Google, eu monto o JWT da conta de serviço e chamo a API REST diretamente. São poucas linhas, e o fluxo fica visível no código.
+
+**Extensão para páginas que exigem navegador.** Algumas páginas de fornecedor só respondem bem com uma sessão aberta no Chrome. Então ligo a extensão ao Python por Native Messaging e socket Unix.
+
+**Limitações que eu conheço.** O cálculo assume que o pacote da loja tem o mesmo tamanho do anúncio, e os testes usam respostas simuladas. Se eu retomasse o projeto, trocaria a leitura de páginas por catálogos oficiais e testaria o painel no navegador.
 
 ## Arquitetura
 
